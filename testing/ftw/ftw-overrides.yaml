@@ -1,0 +1,49 @@
+---
+# ftw-overrides.yaml — shared go-ftw overrides for the OWASP CRS
+# regression corpus. Applied to every pycoraza framework leg (flask,
+# fastapi, starlette) before the framework-specific overrides stack on
+# top.
+#
+# Schema: matches go-ftw's `--overrides` input — an `overrides:` list
+# where each entry names a `rule_id`, the `test_ids` within that rule's
+# YAML to skip, and a `reason`. See
+# github.com/coreruleset/go-ftw for the authoritative struct.
+#
+# Review rules for this file:
+#
+#   * Every override MUST carry a tag prefix in the `reason` string.
+#     A PR that adds an override without a tag will be rejected.
+#
+#   * Tag prefixes used here (shared, framework-agnostic):
+#       [upstream-coraza]  The underlying corazawaf/coraza engine has a
+#                          gap that makes the test fire differently. The
+#                          same test fails against coraza-caddy /
+#                          coraza-node at the same CRS tag. Tracked in
+#                          the upstream coraza repo.
+#       [engine]           A known limitation of our Python bindings
+#                          layer (ctypes/SWIG marshalling, transaction
+#                          lifecycle, etc.) rather than the framework
+#                          integration. Cite the open issue in the
+#                          reason when adding one.
+#
+#   * Framework-specific tags ([flask-*], [fastapi-*], [starlette-*])
+#     belong in the per-framework files, not here.
+#
+#   * Every override MUST cite a concrete reason that applies to US.
+#     Generic "flaky" / "fails" reasons are reviewer-rejected; masking
+#     a bug here is a security regression.
+
+overrides:
+  # ---- [upstream-coraza] engine gaps tracked upstream ----------------
+  # $Version cookie attribute matching is not implemented in the
+  # upstream corazawaf/coraza engine; the same tests fail on every
+  # downstream integration at the current CRS tag.
+  - rule_id: 921250
+    test_ids: [1, 2]
+    reason: "[upstream-coraza] $Version cookie match not yet implemented upstream"
+
+  # `match_regex` is a ModSecurity-specific operator the coraza engine
+  # does not support. Upstream tracks it as a known compatibility gap.
+  - rule_id: 933120
+    test_ids: [2]
+    reason: "[upstream-coraza] match_regex is ModSec-specific; not supported in coraza"

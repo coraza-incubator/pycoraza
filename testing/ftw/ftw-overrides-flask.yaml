@@ -1,0 +1,14 @@
+---
+# ftw-overrides-flask.yaml — Flask-specific overrides.
+#
+# Format: see ../ftw-overrides.yaml for the schema and review rules.
+# Tags:   [flask-<area>] — the reason MUST cite what Flask / Werkzeug
+#         does differently from the CRS/Apache baseline. Examples of
+#         valid areas: [flask-wsgi], [flask-routing], [flask-parser].
+#
+# Adding an override without a tag, or with a generic "fails" reason,
+# will be rejected at review. If the failure is really an upstream
+# engine bug, move it to ../ftw-overrides.yaml under [upstream-coraza]
+# or [engine] and file a tracking issue.
+
+overrides: []

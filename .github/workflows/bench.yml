@@ -1,0 +1,177 @@
+name: Bench (wrk + k6)
+
+# Weekly perf regression alarm. GitHub-hosted runners are noisier than
+# a dedicated bench box — absolute numbers drift, so RPS gates are
+# baseline-relative with a 10% floor. Missed-attack count is a hard
+# fail regardless of run mode: a perf change that reduces block rate
+# is a WAF bug, not a throughput win.
+#
+# Authoritative numbers for docs come from the reference machine; this
+# job exists to catch drift between re-measurements.
+
+on:
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-libcoraza:
+    name: Build libcoraza (manylinux_2_28)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: quay.io/pypa/manylinux_2_28_x86_64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Cache built libcoraza
+        id: libcoraza-cache
+        uses: actions/cache@v4
+        with:
+          path: build/libcoraza
+          key: libcoraza-${{ runner.os }}-x86_64-${{ hashFiles('native/version.txt', 'native/coraza_cdef.h', 'native/scripts/build-libcoraza.sh') }}
+
+      - name: Build libcoraza
+        if: steps.libcoraza-cache.outputs.cache-hit != 'true'
+        env:
+          LIBCORAZA_PREFIX: ${{ github.workspace }}/build/libcoraza
+        run: bash native/scripts/build-libcoraza.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libcoraza-x86_64-bench
+          path: build/libcoraza/
+          retention-days: 3
+          if-no-files-found: error
+
+  bench:
+    name: Bench . ${{ matrix.adapter }}
+    needs: build-libcoraza
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        adapter: [flask, fastapi, starlette]
+    env:
+      REGRESSION_PCT: '10'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: libcoraza-x86_64-bench
+          path: build/libcoraza
+
+      - name: Export libcoraza env
+        run: |
+          set -euo pipefail
+          echo "LIBCORAZA_PREFIX=${GITHUB_WORKSPACE}/build/libcoraza" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${GITHUB_WORKSPACE}/build/libcoraza/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: 'pyproject.toml'
+
+      - name: Install pycoraza + dev deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all,dev]" --config-settings editable_mode=compat
+
+      - name: Install wrk
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wrk
+
+      - name: Install k6
+        run: |
+          set -euo pipefail
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends k6
+          k6 version
+
+      - name: Ensure results dir
+        run: mkdir -p bench/results
+
+      - name: Run wrk per-route bench
+        run: python bench/run.py --framework ${{ matrix.adapter }} --json bench/results/${{ matrix.adapter }}.json
+
+      - name: Run k6 mixed-traffic bench
+        # Hard-fails if missed_attacks > 0 (the script's own exit policy).
+        run: python bench/k6_run.py --framework ${{ matrix.adapter }} --json bench/results/${{ matrix.adapter }}-k6.json
+
+      - name: Compare against baseline (scheduled only)
+        if: github.event_name == 'schedule'
+        env:
+          ADAPTER: ${{ matrix.adapter }}
+        run: |
+          python - <<'PY'
+          import json, os, pathlib, sys
+
+          adapter = os.environ["ADAPTER"]
+          pct = float(os.environ.get("REGRESSION_PCT", "10"))
+          baseline_path = pathlib.Path(f"bench/baselines/{adapter}.json")
+          current_path = pathlib.Path(f"bench/results/{adapter}-k6.json")
+
+          if not baseline_path.exists():
+              print(f"No baseline at {baseline_path}; advisory-only until a baseline is pinned.")
+              sys.exit(0)
+          if not current_path.exists():
+              print(f"::error::No current bench result at {current_path}")
+              sys.exit(1)
+
+          baseline = json.loads(baseline_path.read_text())
+          current = json.loads(current_path.read_text())
+
+          def _rps(doc):
+              for key in ("waf_on_rps", "rps", "requests_per_second"):
+                  if key in doc:
+                      return float(doc[key])
+              for section in ("waf_on", "summary", "metrics"):
+                  sub = doc.get(section) or {}
+                  for key in ("rps", "requests_per_second"):
+                      if key in sub:
+                          return float(sub[key])
+              raise SystemExit(f"could not parse RPS from {doc!r}")
+
+          base_rps = _rps(baseline)
+          cur_rps = _rps(current)
+          floor = base_rps * (1 - pct / 100.0)
+          print(f"Measured WAF-on RPS: {cur_rps:.1f} (baseline: {base_rps:.1f}, floor: {floor:.1f} @ -{pct:.0f}%)")
+          if cur_rps < floor:
+              print(f"::error::REGRESSION: {cur_rps:.1f} < {floor:.1f} ({pct:.0f}% floor of {base_rps:.1f})")
+              sys.exit(1)
+          print("OK: within tolerance")
+          PY
+
+      - name: Advisory note (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "workflow_dispatch: advisory run, RPS gate skipped. k6 missed-attacks gate still applied."
+
+      - name: Upload bench artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ matrix.adapter }}
+          path: bench/results/
+          retention-days: 90
+          if-no-files-found: warn

@@ -1,0 +1,240 @@
+[build-system]
+requires = [
+    "hatchling>=1.25",
+    "hatch-fancy-pypi-readme>=24.1",
+    "cffi>=1.17",
+]
+build-backend = "hatchling.build"
+
+[project]
+name = "pycoraza"
+version = "0.1.0"
+description = "OWASP Coraza Web Application Firewall for Python — Flask, FastAPI, and Starlette middleware powered by libcoraza."
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Juan Pablo Tosso", email = "jptosso@gmail.com" }]
+keywords = [
+    "waf",
+    "coraza",
+    "security",
+    "modsecurity",
+    "crs",
+    "owasp",
+    "flask",
+    "fastapi",
+    "starlette",
+    "middleware",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Framework :: FastAPI",
+    "Framework :: Flask",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: Security",
+]
+dependencies = [
+    "cffi>=1.17",
+]
+dynamic = ["readme"]
+
+[project.optional-dependencies]
+flask = ["flask>=2.3"]
+starlette = ["starlette>=0.36"]
+fastapi = ["fastapi>=0.110", "starlette>=0.36"]
+all = [
+    "flask>=2.3",
+    "starlette>=0.36",
+    "fastapi>=0.110",
+]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+    "flask>=2.3",
+    "starlette>=0.36",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.30",
+    "gunicorn>=22.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "cibuildwheel>=2.21",
+    "towncrier>=24.8",
+    "types-cffi>=1.17",
+]
+
+[project.urls]
+Homepage = "https://github.com/jptosso/pycoraza"
+Documentation = "https://jptosso.github.io/pycoraza"
+Repository = "https://github.com/jptosso/pycoraza"
+Issues = "https://github.com/jptosso/pycoraza/issues"
+Changelog = "https://github.com/jptosso/pycoraza/blob/main/CHANGELOG.md"
+
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/pycoraza",
+    "/native",
+    "/tests",
+    "/docs",
+    "/examples",
+    "/bench",
+    "/testing",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/SECURITY.md",
+    "/AGENTS.md",
+    "/pyproject.toml",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pycoraza"]
+artifacts = [
+    "src/pycoraza/_bindings/*.so",
+    "src/pycoraza/_bindings/*.pyd",
+    "src/pycoraza/coreruleset/rules/**/*.conf",
+    "src/pycoraza/coreruleset/rules/**/*.data",
+]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "native/build_ffi.py"
+
+[tool.cibuildwheel]
+build = "cp310-manylinux_x86_64 cp311-manylinux_x86_64 cp312-manylinux_x86_64 cp313-manylinux_x86_64 cp310-manylinux_aarch64 cp311-manylinux_aarch64 cp312-manylinux_aarch64 cp313-manylinux_aarch64"
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
+before-all = "bash native/scripts/build-libcoraza.sh"
+build-verbosity = 1
+test-requires = ["pytest>=8.2", "httpx>=0.27", "flask>=2.3", "starlette>=0.36", "fastapi>=0.110"]
+test-command = "pytest {project}/tests/integration -x -q"
+environment = { GO_VERSION = "1.25.3", SWIG_VERSION = "4.2.1", LIBCORAZA_PREFIX = "/opt/libcoraza" }
+
+[tool.cibuildwheel.linux]
+repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel}"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--import-mode=importlib",
+]
+asyncio_mode = "auto"
+markers = [
+    "integration: requires a built libcoraza (slow)",
+    "e2e: end-to-end against a running server",
+    "signals: exercises Go-runtime signal interaction",
+]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning:pkg_resources",
+]
+
+[tool.coverage.run]
+source = ["src/pycoraza"]
+branch = true
+omit = [
+    "src/pycoraza/_bindings/*",
+    "src/pycoraza/_vendor/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == \"__main__\":",
+]
+fail_under = 90
+show_missing = true
+
+[tool.coverage.paths]
+source = ["src/pycoraza", "*/site-packages/pycoraza"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["native/libcoraza", "src/pycoraza/_bindings", "src/pycoraza/_vendor"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",
+    "I",
+    "UP",
+    "B",
+    "C4",
+    "SIM",
+    "PGH",
+    "RUF",
+]
+ignore = [
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["src/pycoraza"]
+exclude = ["src/pycoraza/_bindings", "src/pycoraza/_vendor"]
+
+[tool.towncrier]
+directory = "news"
+filename = "CHANGELOG.md"
+package = "pycoraza"
+package_dir = "src"
+title_format = "## [{version}] - {project_date}"
+issue_format = "[#{issue}](https://github.com/jptosso/pycoraza/issues/{issue})"
+underlines = ["", "", ""]
+
+[[tool.towncrier.type]]
+directory = "security"
+name = "Security"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "feature"
+name = "Added"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "change"
+name = "Changed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "fix"
+name = "Fixed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "removal"
+name = "Removed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "misc"
+name = "Internal"
+showcontent = false

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pycoraza-shared-example"
+version = "0.1.0"
+description = "Shared HTTP contract used by the pycoraza Flask, FastAPI, and Starlette example apps."
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "Juan Pablo Tosso", email = "jptosso@gmail.com" }]
+dependencies = [
+    "pycoraza>=0.1.0",
+]
+
+[tool.hatch.build.targets.wheel]
+only-include = ["pycoraza_shared.py"]

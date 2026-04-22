@@ -1,0 +1,18 @@
+* text=auto eol=lf
+*.py text eol=lf
+*.sh text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.toml text eol=lf
+
+*.so binary
+*.dylib binary
+*.dll binary
+*.conf binary
+
+src/pycoraza/coreruleset/rules/* linguist-vendored
+native/libcoraza/* linguist-vendored

@@ -1,0 +1,80 @@
+name: News fragment check
+
+# Guardrail: every PR that changes src/pycoraza/** or pyproject.toml must
+# ship a towncrier fragment under news/, so the CHANGELOG generated at
+# release time has an entry authored by the same person who made the
+# change. Non-publishable changes (docs, CI, tests only) are exempt.
+#
+# Skip with the `skip-news` label, or commit an empty-intent fragment
+# like `news/+<slug>.misc.md` containing "no user-visible change".
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check:
+    name: News fragment present
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: |
+      github.event.pull_request.user.login != 'github-actions[bot]' &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-news')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Detect publishable-surface changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            publishable:
+              - 'src/pycoraza/**'
+              - 'pyproject.toml'
+
+      - name: Verify a news fragment was added
+        if: steps.filter.outputs.publishable == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$BASE_SHA" || true
+          added=$(git diff --name-only --diff-filter=A "$BASE_SHA" "$HEAD_SHA" || git diff --name-only --diff-filter=A "$HEAD_SHA^" "$HEAD_SHA")
+          # Count added files under news/ that aren't the README.
+          count=$(echo "$added" | grep -E '^news/[^/]+\.md$' | grep -vE '^news/README\.md$' | wc -l | tr -d ' ')
+          if [ "${count:-0}" -ge 1 ]; then
+            echo "News fragment(s) found:"
+            echo "$added" | grep -E '^news/[^/]+\.md$' | grep -vE '^news/README\.md$'
+            exit 0
+          fi
+          cat <<'EOF' >&2
+          ::error::This PR touches src/pycoraza/** or pyproject.toml but ships no news fragment.
+
+          Add a fragment under news/ so towncrier generates a CHANGELOG entry at release:
+
+            news/<slug>.security.md   security-impacting change
+            news/<slug>.feature.md    new API / option / behaviour
+            news/<slug>.change.md     behaviour change (non-breaking API)
+            news/<slug>.fix.md        bug fix
+            news/<slug>.removal.md    removed option / API
+            news/<slug>.misc.md       internal only (no user-visible change)
+
+          For an internal-only change that legitimately should not release,
+          commit `news/<slug>.misc.md` with "no user-visible change.",
+          or add the `skip-news` label to this PR.
+          EOF
+          exit 1
+
+      - name: Not required
+        if: steps.filter.outputs.publishable != 'true'
+        run: echo "No publishable-surface change; news fragment not required."

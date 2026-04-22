@@ -1,0 +1,227 @@
+name: FTW (CRS regression)
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'src/pycoraza/**'
+      - 'examples/**'
+      - 'native/**'
+      - 'testing/ftw/**'
+      - '.github/workflows/ftw.yml'
+      - 'pyproject.toml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'src/pycoraza/**'
+      - 'examples/**'
+      - 'native/**'
+      - 'testing/ftw/**'
+      - '.github/workflows/ftw.yml'
+      - 'pyproject.toml'
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ftw-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  detect-scope:
+    name: Resolve affected adapters
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+      skip: ${{ steps.pick.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Path filter (PR only)
+        if: github.event_name == 'pull_request'
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            shared:
+              - 'src/pycoraza/__init__.py'
+              - 'src/pycoraza/abi.py'
+              - 'src/pycoraza/waf.py'
+              - 'src/pycoraza/transaction.py'
+              - 'src/pycoraza/pool.py'
+              - 'src/pycoraza/skip.py'
+              - 'src/pycoraza/logger.py'
+              - 'src/pycoraza/types.py'
+              - 'src/pycoraza/_signals.py'
+              - 'src/pycoraza/coreruleset/**'
+              - 'native/**'
+              - 'examples/shared/**'
+              - 'testing/ftw/**'
+              - '.github/workflows/ftw.yml'
+              - 'pyproject.toml'
+            flask:
+              - 'src/pycoraza/flask/**'
+              - 'examples/flask_app/**'
+            fastapi:
+              - 'src/pycoraza/fastapi/**'
+              - 'examples/fastapi_app/**'
+            starlette:
+              - 'src/pycoraza/starlette/**'
+              - 'examples/starlette_app/**'
+
+      - id: pick
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SHARED: ${{ steps.filter.outputs.shared }}
+          FLASK: ${{ steps.filter.outputs.flask }}
+          FASTAPI: ${{ steps.filter.outputs.fastapi }}
+          STARLETTE: ${{ steps.filter.outputs.starlette }}
+        run: |
+          set -euo pipefail
+          full='["flask","fastapi","starlette"]'
+          if [[ "$EVENT_NAME" == "schedule" || "$EVENT_NAME" == "workflow_dispatch" || "$EVENT_NAME" == "push" ]]; then
+            echo "matrix=$full" >> "$GITHUB_OUTPUT"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Non-PR trigger: running full matrix."
+            exit 0
+          fi
+          if [[ "$SHARED" == "true" ]]; then
+            echo "matrix=$full" >> "$GITHUB_OUTPUT"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Shared path changed: full matrix."
+            exit 0
+          fi
+          picks=()
+          [[ "$FLASK" == "true" ]] && picks+=('"flask"')
+          [[ "$FASTAPI" == "true" ]] && picks+=('"fastapi"')
+          [[ "$STARLETTE" == "true" ]] && picks+=('"starlette"')
+          if [[ ${#picks[@]} -eq 0 ]]; then
+            echo "matrix=[]" >> "$GITHUB_OUTPUT"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No adapter-affecting change detected; FTW skipped."
+          else
+            joined=$(IFS=,; echo "${picks[*]}")
+            echo "matrix=[$joined]" >> "$GITHUB_OUTPUT"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Affected adapters: [$joined]"
+          fi
+
+  build-libcoraza:
+    name: Build libcoraza (manylinux_2_28)
+    needs: detect-scope
+    if: needs.detect-scope.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: quay.io/pypa/manylinux_2_28_x86_64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Cache built libcoraza
+        id: libcoraza-cache
+        uses: actions/cache@v4
+        with:
+          path: build/libcoraza
+          key: libcoraza-${{ runner.os }}-x86_64-${{ hashFiles('native/version.txt', 'native/coraza_cdef.h', 'native/scripts/build-libcoraza.sh') }}
+          restore-keys: ''
+
+      - name: Build libcoraza
+        if: steps.libcoraza-cache.outputs.cache-hit != 'true'
+        env:
+          LIBCORAZA_PREFIX: ${{ github.workspace }}/build/libcoraza
+        run: bash native/scripts/build-libcoraza.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libcoraza-x86_64-ftw
+          path: build/libcoraza/
+          retention-days: 3
+          if-no-files-found: error
+
+  ftw:
+    name: FTW . ${{ matrix.adapter }}
+    needs: [detect-scope, build-libcoraza]
+    if: needs.detect-scope.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        adapter: ${{ fromJson(needs.detect-scope.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: libcoraza-x86_64-ftw
+          path: build/libcoraza
+
+      - name: Export libcoraza env
+        run: |
+          set -euo pipefail
+          echo "LIBCORAZA_PREFIX=${GITHUB_WORKSPACE}/build/libcoraza" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${GITHUB_WORKSPACE}/build/libcoraza/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      - name: Read pinned Go / go-ftw versions
+        id: pins
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source native/version.txt
+          echo "go_version=${GO_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "go_ftw_version=${GO_FTW_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: 'pyproject.toml'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.pins.outputs.go_version }}
+          check-latest: false
+
+      - name: Install pycoraza with all extras + dev
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all,dev]" --config-settings editable_mode=compat
+
+      - name: Resolve adapter port
+        id: cfg
+        run: |
+          case "${{ matrix.adapter }}" in
+            flask)     echo "port=5000" >> "$GITHUB_OUTPUT" ;;
+            fastapi)   echo "port=5001" >> "$GITHUB_OUTPUT" ;;
+            starlette) echo "port=5002" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Run go-ftw against ${{ matrix.adapter }}
+        env:
+          GO_FTW_VERSION: ${{ steps.pins.outputs.go_ftw_version }}
+        run: |
+          bash testing/ftw/run.sh \
+            --framework "${{ matrix.adapter }}" \
+            --port "${{ steps.cfg.outputs.port }}" \
+            --threshold 100
+
+      - name: Upload ftw artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ftw-${{ matrix.adapter }}-artifacts
+          path: testing/ftw/build/
+          retention-days: 7
+          if-no-files-found: ignore

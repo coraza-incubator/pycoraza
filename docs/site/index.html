@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>pycoraza &middot; OWASP Coraza WAF for Python</title>
+<meta name="description" content="OWASP Coraza Web Application Firewall for Python. Flask, FastAPI, and Starlette middleware with security-first defaults and the OWASP Core Rule Set.">
+<meta name="color-scheme" content="light dark">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="pycoraza &middot; OWASP Coraza WAF for Python">
+<meta property="og:description" content="OWASP Coraza Web Application Firewall for Python. Flask, FastAPI, and Starlette middleware with security-first defaults and the OWASP Core Rule Set.">
+<meta property="og:url" content="https://jptosso.github.io/pycoraza/">
+<meta property="og:site_name" content="pycoraza">
+
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="pycoraza &middot; OWASP Coraza WAF for Python">
+<meta name="twitter:description" content="Flask, FastAPI, and Starlette middleware with security-first defaults.">
+
+<link rel="canonical" href="https://jptosso.github.io/pycoraza/">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-theme="auto">
+
+<header class="topbar">
+  <div class="container topbar-inner">
+    <a class="brand" href="#top" aria-label="pycoraza home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2.5 3.5 6v6.2c0 4.4 3.2 7.9 8.5 9.3 5.3-1.4 8.5-4.9 8.5-9.3V6L12 2.5z"/>
+          <path d="m8.5 12 2.5 2.5L16 10"/>
+        </svg>
+      </span>
+      <span class="brand-name">pycoraza</span>
+    </a>
+
+    <nav class="topnav" aria-label="Primary">
+      <a href="#quickstart">Quickstart</a>
+      <a href="#features">Features</a>
+      <a href="#docs">Docs</a>
+      <a href="https://github.com/jptosso/pycoraza" rel="noopener">GitHub</a>
+    </nav>
+
+    <div class="topbar-actions">
+      <button class="icon-btn" id="themeToggle" type="button" aria-label="Toggle color theme">
+        <svg class="icon-sun" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+
+  <section class="hero">
+    <div class="container">
+      <p class="kicker">OWASP Coraza &middot; for Python</p>
+      <h1>A web application firewall that lives inside your Python app.</h1>
+      <p class="lede">
+        pycoraza wraps the Go-based <a href="https://github.com/corazawaf/coraza">Coraza engine</a>
+        via <code>libcoraza.so</code> and exposes idiomatic middleware for Flask,
+        FastAPI, and Starlette. Security-first defaults, the OWASP Core Rule
+        Set bundled, one import away from blocking attacks on every request.
+      </p>
+
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="#quickstart">Get started</a>
+        <a class="btn" href="../threat-model.md">Read the threat model</a>
+      </div>
+
+      <ul class="pills" aria-label="Project facts">
+        <li class="pill"><span class="pill-k">pkg</span><code>pycoraza</code></li>
+        <li class="pill"><span class="pill-k">python</span>&ge; 3.11</li>
+        <li class="pill"><span class="pill-k">engine</span>Coraza v3</li>
+        <li class="pill"><span class="pill-k">ruleset</span>CRS bundled</li>
+        <li class="pill"><span class="pill-k">license</span>Apache-2.0</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section" id="features">
+    <div class="container">
+      <h2>Why pycoraza</h2>
+      <div class="grid grid-3">
+        <article class="card">
+          <h3>Secure by default</h3>
+          <p>
+            <code>on_waf_error="block"</code>, <code>mode=DETECT</code>,
+            <code>inspect_response=False</code>. Every default is the one
+            you'd pick after a pentest.
+          </p>
+        </article>
+
+        <article class="card">
+          <h3>Real middleware, not a proxy</h3>
+          <p>
+            Runs inside your process. Access <code>environ</code> /
+            <code>scope</code>, write a custom <code>on_block</code>, skip
+            routes with a predicate, attach metadata &mdash; all in-band.
+          </p>
+        </article>
+
+        <article class="card">
+          <h3>CRS in one import</h3>
+          <p>
+            <code>recommended()</code>, <code>balanced()</code>,
+            <code>strict()</code>, <code>permissive()</code>. The OWASP Core
+            Rule Set with paranoia and threshold knobs exposed as keyword
+            arguments.
+          </p>
+        </article>
+
+        <article class="card">
+          <h3>Three framework adapters</h3>
+          <p>
+            Flask via WSGI. FastAPI and Starlette via ASGI, with Coraza
+            running in a thread so it doesn't stall the event loop.
+          </p>
+        </article>
+
+        <article class="card">
+          <h3>Fail-closed by construction</h3>
+          <p>
+            Adapters catch <code>CorazaError</code> and return 500 rather
+            than letting a framework's exception handler silently pass the
+            request through.
+          </p>
+        </article>
+
+        <article class="card">
+          <h3>No sidecar, no Go toolchain</h3>
+          <p>
+            Linux wheels ship <code>libcoraza.so</code> vendored. Install
+            with pip and you're done. Source distributions still require
+            Go 1.25+ and SWIG 4+.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section-alt" id="install">
+    <div class="container">
+      <h2>Install</h2>
+      <p>Pick the extra that matches your framework.</p>
+      <pre class="code" data-lang="bash"><code>pip install pycoraza                 <span class="c-c"># core only</span>
+pip install "pycoraza[flask]"        <span class="c-c"># + Flask middleware</span>
+pip install "pycoraza[fastapi]"      <span class="c-c"># + FastAPI / Starlette middleware</span>
+pip install "pycoraza[all]"          <span class="c-c"># everything</span></code></pre>
+    </div>
+  </section>
+
+  <section class="section" id="quickstart">
+    <div class="container">
+      <h2>Quickstart</h2>
+      <p>Three adapters, one API shape. Click a tab to switch.</p>
+
+      <div class="tabs" data-tabgroup="framework">
+        <div class="tab-list" role="tablist">
+          <button class="tab" role="tab" data-tab="flask" aria-selected="true">Flask</button>
+          <button class="tab" role="tab" data-tab="fastapi" aria-selected="false">FastAPI</button>
+          <button class="tab" role="tab" data-tab="starlette" aria-selected="false">Starlette</button>
+        </div>
+
+        <div class="tab-panel" data-tab="flask">
+<pre class="code" data-lang="python"><code><span class="c-k">from</span> flask <span class="c-k">import</span> Flask
+<span class="c-k">from</span> pycoraza <span class="c-k">import</span> create_waf, WAFConfig, ProcessMode
+<span class="c-k">from</span> pycoraza.coreruleset <span class="c-k">import</span> recommended
+<span class="c-k">from</span> pycoraza.flask <span class="c-k">import</span> CorazaMiddleware
+
+app = <span class="c-f">Flask</span>(__name__)
+
+waf = <span class="c-f">create_waf</span>(<span class="c-f">WAFConfig</span>(
+    rules=<span class="c-f">recommended</span>(paranoia=<span class="c-n">1</span>),
+    mode=ProcessMode.BLOCK,
+))
+
+app.wsgi_app = <span class="c-f">CorazaMiddleware</span>(app.wsgi_app, waf=waf)
+
+<span class="c-k">@app.get</span>(<span class="c-s">"/"</span>)
+<span class="c-k">def</span> <span class="c-f">index</span>():
+    <span class="c-k">return</span> {<span class="c-s">"ok"</span>: <span class="c-n">True</span>}</code></pre>
+        </div>
+
+        <div class="tab-panel" data-tab="fastapi" hidden>
+<pre class="code" data-lang="python"><code><span class="c-k">from</span> fastapi <span class="c-k">import</span> FastAPI
+<span class="c-k">from</span> pycoraza <span class="c-k">import</span> create_waf, WAFConfig, ProcessMode
+<span class="c-k">from</span> pycoraza.coreruleset <span class="c-k">import</span> recommended
+<span class="c-k">from</span> pycoraza.fastapi <span class="c-k">import</span> CorazaMiddleware
+
+waf = <span class="c-f">create_waf</span>(<span class="c-f">WAFConfig</span>(
+    rules=<span class="c-f">recommended</span>(paranoia=<span class="c-n">1</span>),
+    mode=ProcessMode.BLOCK,
+))
+
+api = <span class="c-f">FastAPI</span>()
+api.<span class="c-f">add_middleware</span>(CorazaMiddleware, waf=waf)
+
+<span class="c-k">@api.get</span>(<span class="c-s">"/"</span>)
+<span class="c-k">async def</span> <span class="c-f">index</span>():
+    <span class="c-k">return</span> {<span class="c-s">"ok"</span>: <span class="c-n">True</span>}</code></pre>
+        </div>
+
+        <div class="tab-panel" data-tab="starlette" hidden>
+<pre class="code" data-lang="python"><code><span class="c-k">from</span> starlette.applications <span class="c-k">import</span> Starlette
+<span class="c-k">from</span> starlette.middleware <span class="c-k">import</span> Middleware
+<span class="c-k">from</span> pycoraza <span class="c-k">import</span> create_waf, WAFConfig, ProcessMode
+<span class="c-k">from</span> pycoraza.coreruleset <span class="c-k">import</span> recommended
+<span class="c-k">from</span> pycoraza.starlette <span class="c-k">import</span> CorazaMiddleware
+
+waf = <span class="c-f">create_waf</span>(<span class="c-f">WAFConfig</span>(
+    rules=<span class="c-f">recommended</span>(),
+    mode=ProcessMode.BLOCK,
+))
+
+app = <span class="c-f">Starlette</span>(middleware=[<span class="c-f">Middleware</span>(CorazaMiddleware, waf=waf)])</code></pre>
+        </div>
+      </div>
+
+      <p class="muted">
+        Now send a malicious request:
+      </p>
+<pre class="code" data-lang="bash"><code>curl -i <span class="c-s">"http://127.0.0.1:5000/?q=../../etc/passwd"</span>
+<span class="c-c"># HTTP/1.1 403 Blocked</span>
+<span class="c-c"># {"error":"blocked","rule_id":930110,...}</span></code></pre>
+    </div>
+  </section>
+
+  <section class="section section-alt" id="defaults">
+    <div class="container">
+      <h2>Secure defaults, explained</h2>
+      <dl class="defs">
+        <dt><code>mode=ProcessMode.DETECT</code></dt>
+        <dd>
+          Log-only out of the box. Flip to <code>BLOCK</code> after you've
+          reviewed false positives in your logs. A misconfigured rule in
+          detect mode logs noise; in block mode it takes your service down.
+        </dd>
+
+        <dt><code>on_waf_error="block"</code></dt>
+        <dd>
+          If the WAF can't evaluate a request (allocation failure, invalid
+          SecLang at init, whatever), the adapter returns 500. Opt into
+          <code>"allow"</code> only when availability matters more than
+          security for this deployment.
+        </dd>
+
+        <dt><code>inspect_response=False</code></dt>
+        <dd>
+          Phase 3 (response headers) and phase 4 (response body) are off
+          unless you turn them on. Enable when you have rules that look at
+          response content; leave off otherwise.
+        </dd>
+
+        <dt>Static-asset bypass</dt>
+        <dd>
+          Images, CSS, JS, fonts, <code>/static/</code>,
+          <code>/_next/static/</code>, <code>/assets/</code>, and
+          <code>/favicon.ico</code> skip the WAF by default. Override with
+          the <code>skip=</code> parameter on every adapter.
+        </dd>
+      </dl>
+    </div>
+  </section>
+
+  <section class="section" id="docs">
+    <div class="container">
+      <h2>Documentation</h2>
+      <div class="grid grid-3">
+        <a class="card card-link" href="../quickstart.md">
+          <h3>Quickstart</h3>
+          <p>First block in 5 minutes.</p>
+        </a>
+        <a class="card card-link" href="../flask.md">
+          <h3>Flask guide</h3>
+          <p>WSGI middleware, gunicorn, gevent.</p>
+        </a>
+        <a class="card card-link" href="../fastapi.md">
+          <h3>FastAPI guide</h3>
+          <p>ASGI middleware, uvicorn workers.</p>
+        </a>
+        <a class="card card-link" href="../starlette.md">
+          <h3>Starlette guide</h3>
+          <p>ASGI middleware, ordering, hypercorn.</p>
+        </a>
+        <a class="card card-link" href="../crs-profiles.md">
+          <h3>CRS profiles</h3>
+          <p>Paranoia, thresholds, custom SecLang.</p>
+        </a>
+        <a class="card card-link" href="../threat-model.md">
+          <h3>Threat model</h3>
+          <p>Go-runtime caveats, fail-closed checklist.</p>
+        </a>
+        <a class="card card-link" href="../performance.md">
+          <h3>Performance</h3>
+          <p>Baseline numbers and methodology.</p>
+        </a>
+        <a class="card card-link" href="../security-checklist.md">
+          <h3>Security checklist</h3>
+          <p>For contributors and reviewers.</p>
+        </a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <p>
+      pycoraza is Apache-2.0 licensed. The engine is
+      <a href="https://github.com/corazawaf/coraza">OWASP Coraza</a>.
+      This is the Python sibling of
+      <a href="https://github.com/jptosso/coraza-node">coraza-node</a>.
+    </p>
+    <p class="muted">
+      <a href="https://github.com/jptosso/pycoraza">GitHub</a> &middot;
+      <a href="https://github.com/jptosso/pycoraza/blob/main/SECURITY.md">Security policy</a> &middot;
+      <a href="../threat-model.md">Threat model</a>
+    </p>
+  </div>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

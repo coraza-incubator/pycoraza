@@ -1,0 +1,262 @@
+name: Release
+
+# Fires on push of a vX.Y.Z tag on main.
+#
+# Flow:
+#   1. verify-changelog  — CHANGELOG.md must already contain a section
+#      for the tagged version. Maintainers run `towncrier build` before
+#      tagging; this job is the guardrail against forgetting.
+#   2. build-sdist       — python -m build --sdist.
+#   3. build-wheels      — full cibuildwheel matrix (manylinux_2_28
+#      x86_64 + aarch64, cp310..cp313) per pyproject.toml.
+#   4. test-wheels       — install cp312 wheel in a clean venv, run the
+#      integration tests against the shipped binding.
+#   5. publish           — PyPI trusted publishing (OIDC).
+#   6. github-release    — GH release with notes extracted from
+#      CHANGELOG.md for the tagged version.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+concurrency: release-${{ github.ref }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify-changelog:
+    name: Verify CHANGELOG entry
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      notes_file: ${{ steps.notes.outputs.notes_file }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve tag version
+        id: v
+        run: |
+          set -euo pipefail
+          raw="${GITHUB_REF_NAME}"
+          version="${raw#v}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Releasing version: ${version}"
+
+      - name: Grep CHANGELOG for version section
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ ! -f CHANGELOG.md ]; then
+            echo "::error::CHANGELOG.md is missing. Run 'towncrier build --version ${VERSION} --yes' before tagging."
+            exit 1
+          fi
+          if ! grep -Eq "^## \[?v?${VERSION}\]?" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no section for version ${VERSION}. Run 'towncrier build --version ${VERSION} --yes', commit, then re-tag."
+            exit 1
+          fi
+          echo "CHANGELOG.md contains section for ${VERSION}."
+
+      - name: Extract release notes for this version
+        id: notes
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Slice the CHANGELOG section for VERSION: from its '## ' header
+          # up to (but not including) the next '## ' header.
+          python - <<'PY' > release-notes.md
+          import os, re, pathlib, sys
+          version = os.environ["VERSION"]
+          text = pathlib.Path("CHANGELOG.md").read_text()
+          pat = re.compile(r"^## \[?v?" + re.escape(version) + r"\]?.*$", re.M)
+          m = pat.search(text)
+          if not m:
+              sys.exit(f"no section for {version}")
+          start = m.end()
+          nxt = re.search(r"^## ", text[start:], re.M)
+          end = start + nxt.start() if nxt else len(text)
+          print(text[start:end].strip())
+          PY
+          echo "notes_file=release-notes.md" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+          retention-days: 7
+
+  build-sdist:
+    name: Build sdist
+    needs: verify-changelog
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade pip build
+
+      - name: Build sdist
+        run: python -m build --sdist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          retention-days: 14
+          if-no-files-found: error
+
+  build-wheels:
+    name: Build wheels (${{ matrix.arch }})
+    needs: verify-changelog
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up QEMU (aarch64 emulation)
+        if: matrix.arch == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Install cibuildwheel
+        run: python -m pip install --upgrade pip cibuildwheel
+
+      - name: Build wheels
+        env:
+          CIBW_ARCHS_LINUX: ${{ matrix.arch }}
+        run: python -m cibuildwheel --platform linux --output-dir wheelhouse
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.arch }}
+          path: wheelhouse/*.whl
+          retention-days: 14
+          if-no-files-found: error
+
+  test-wheels:
+    name: Test wheel cp312 ${{ matrix.arch }}
+    needs: build-wheels
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-${{ matrix.arch }}
+          path: wheelhouse
+
+      - name: Install wheel in fresh venv and run integration tests
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/whl
+          /tmp/whl/bin/pip install --upgrade pip
+          wheel=$(ls wheelhouse/pycoraza-*-cp312-*manylinux*_${{ matrix.arch }}.whl | head -1)
+          /tmp/whl/bin/pip install "$wheel"
+          /tmp/whl/bin/pip install 'pytest>=8.2' 'httpx>=0.27' 'flask>=2.3' 'starlette>=0.36' 'fastapi>=0.110'
+          /tmp/whl/bin/python -c "import pycoraza; print('installed:', pycoraza.__name__)"
+          /tmp/whl/bin/pytest tests/integration -x
+
+  publish:
+    name: Publish to PyPI
+    needs: [build-sdist, build-wheels, test-wheels]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pycoraza
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+      - name: List distributions
+        run: ls -la dist/
+
+      - name: Publish to PyPI (trusted publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+
+  github-release:
+    name: Create GitHub release
+    needs: [publish, verify-changelog]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: .
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: release-notes.md
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+          draft: false
+          prerelease: false

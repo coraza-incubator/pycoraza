@@ -1,0 +1,177 @@
+name: Upstream bump
+
+# Polls upstream libcoraza + coraza-coreruleset (and the core coraza
+# engine for visibility). On a new release: update native/version.txt,
+# rebuild libcoraza, add a towncrier fragment under news/, open a PR.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Bump even if versions unchanged'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  check-upstream:
+    name: Detect new libcoraza / CRS / coraza releases
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      libcoraza_new: ${{ steps.detect.outputs.libcoraza_new }}
+      crs_new: ${{ steps.detect.outputs.crs_new }}
+      coraza_new: ${{ steps.detect.outputs.coraza_new }}
+      libcoraza_ver: ${{ steps.detect.outputs.libcoraza_ver }}
+      crs_ver: ${{ steps.detect.outputs.crs_ver }}
+      coraza_ver: ${{ steps.detect.outputs.coraza_ver }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Read pinned versions
+        id: pinned
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source native/version.txt
+          echo "libcoraza=${LIBCORAZA_TAG}" >> "$GITHUB_OUTPUT"
+          echo "crs=${CRS_TAG}" >> "$GITHUB_OUTPUT"
+          echo "coraza=${CORAZA_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch latest upstream releases
+        id: detect
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PIN_LIBCORAZA: ${{ steps.pinned.outputs.libcoraza }}
+          PIN_CRS: ${{ steps.pinned.outputs.crs }}
+          PIN_CORAZA: ${{ steps.pinned.outputs.coraza }}
+        run: |
+          set -euo pipefail
+          libcoraza_latest=$(gh api repos/corazawaf/libcoraza/releases/latest --jq .tag_name 2>/dev/null || echo "")
+          crs_latest=$(gh api repos/corazawaf/coraza-coreruleset/releases/latest --jq .tag_name)
+          coraza_latest=$(gh api repos/corazawaf/coraza/releases/latest --jq .tag_name)
+          if [[ -z "$libcoraza_latest" ]]; then
+            # libcoraza may not cut formal releases; fall back to main.
+            libcoraza_latest="main"
+          fi
+          echo "libcoraza_ver=$libcoraza_latest" >> "$GITHUB_OUTPUT"
+          echo "crs_ver=$crs_latest" >> "$GITHUB_OUTPUT"
+          echo "coraza_ver=$coraza_latest" >> "$GITHUB_OUTPUT"
+          libcoraza_new=$([ "$libcoraza_latest" != "$PIN_LIBCORAZA" ] && echo 1 || echo 0)
+          crs_new=$([ "$crs_latest" != "$PIN_CRS" ] && echo 1 || echo 0)
+          coraza_new=$([ "$coraza_latest" != "$PIN_CORAZA" ] && echo 1 || echo 0)
+          echo "libcoraza_new=$libcoraza_new" >> "$GITHUB_OUTPUT"
+          echo "crs_new=$crs_new" >> "$GITHUB_OUTPUT"
+          echo "coraza_new=$coraza_new" >> "$GITHUB_OUTPUT"
+          echo "Pinned : libcoraza=$PIN_LIBCORAZA  crs=$PIN_CRS  coraza=$PIN_CORAZA"
+          echo "Latest : libcoraza=$libcoraza_latest  crs=$crs_latest  coraza=$coraza_latest"
+
+  bump:
+    name: Bump + rebuild + open PR
+    needs: check-upstream
+    if: >
+      needs.check-upstream.outputs.libcoraza_new == '1' ||
+      needs.check-upstream.outputs.crs_new == '1' ||
+      needs.check-upstream.outputs.coraza_new == '1' ||
+      github.event.inputs.force == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Update native/version.txt
+        env:
+          LIBCORAZA_VER: ${{ needs.check-upstream.outputs.libcoraza_ver }}
+          CRS_VER: ${{ needs.check-upstream.outputs.crs_ver }}
+          CORAZA_VER: ${{ needs.check-upstream.outputs.coraza_ver }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os, pathlib, re
+          path = pathlib.Path("native/version.txt")
+          text = path.read_text()
+          repl = {
+              "LIBCORAZA_TAG": os.environ["LIBCORAZA_VER"],
+              "CORAZA_TAG":    os.environ["CORAZA_VER"],
+              "CRS_TAG":       os.environ["CRS_VER"],
+          }
+          for key, val in repl.items():
+              text = re.sub(rf"^{key}=.*$", f"{key}={val}", text, flags=re.M)
+          path.write_text(text)
+          print(text)
+          PY
+
+      - name: Rebuild libcoraza (manylinux_2_28)
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/work" \
+            -w /work \
+            -e LIBCORAZA_PREFIX=/work/build/libcoraza \
+            quay.io/pypa/manylinux_2_28_x86_64 \
+            bash native/scripts/build-libcoraza.sh
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Sanity import + unit tests
+        env:
+          LIBCORAZA_PREFIX: ${{ github.workspace }}/build/libcoraza
+          LD_LIBRARY_PATH: ${{ github.workspace }}/build/libcoraza/lib
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" --config-settings editable_mode=compat
+          python -c "import pycoraza; print('import ok')"
+          pytest tests/ -x -q
+
+      - name: Add towncrier news fragment
+        env:
+          LIBCORAZA_VER: ${{ needs.check-upstream.outputs.libcoraza_ver }}
+          CRS_VER: ${{ needs.check-upstream.outputs.crs_ver }}
+          CORAZA_VER: ${{ needs.check-upstream.outputs.coraza_ver }}
+        run: |
+          set -euo pipefail
+          stamp=$(date -u +%Y%m%d)
+          file="news/bump-libcoraza-${stamp}.change.md"
+          mkdir -p news
+          cat > "$file" <<EOF
+          Bumped pinned upstream versions: libcoraza=${LIBCORAZA_VER},
+          coraza=${CORAZA_VER}, coreruleset=${CRS_VER}. Rebuilt libcoraza.so
+          against the new tags.
+          EOF
+          echo "Wrote $file"
+
+      - name: Open PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: upstream-bump/libcoraza-${{ needs.check-upstream.outputs.libcoraza_ver }}-crs-${{ needs.check-upstream.outputs.crs_ver }}
+          commit-message: 'chore: bump libcoraza=${{ needs.check-upstream.outputs.libcoraza_ver }} crs=${{ needs.check-upstream.outputs.crs_ver }} coraza=${{ needs.check-upstream.outputs.coraza_ver }}'
+          title: 'chore: bump libcoraza + CRS + coraza to latest'
+          body: |
+            Automated upstream bump:
+            - `corazawaf/libcoraza` -> `${{ needs.check-upstream.outputs.libcoraza_ver }}`
+            - `corazawaf/coraza` -> `${{ needs.check-upstream.outputs.coraza_ver }}`
+            - `corazawaf/coraza-coreruleset` -> `${{ needs.check-upstream.outputs.crs_ver }}`
+
+            libcoraza.so rebuilt against the new tags. Unit tests pass in
+            CI. News fragment added under `news/`.
+
+            Review the upstream release notes before merging:
+            - https://github.com/corazawaf/libcoraza/releases
+            - https://github.com/corazawaf/coraza/releases/tag/${{ needs.check-upstream.outputs.coraza_ver }}
+            - https://github.com/corazawaf/coraza-coreruleset/releases/tag/${{ needs.check-upstream.outputs.crs_ver }}
+          labels: |
+            upstream-bump
+            automated

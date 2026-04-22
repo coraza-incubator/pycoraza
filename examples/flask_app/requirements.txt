@@ -1,0 +1,3 @@
+# Pin PyPI names for the app. For local dev against the source tree,
+# run `pip install -e ".[dev]"` from the repo root instead.
+pycoraza[flask]

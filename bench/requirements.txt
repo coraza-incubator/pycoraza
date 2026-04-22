@@ -1,0 +1,7 @@
+# bench/run.py and bench/k6_run.py use only stdlib.
+# `wrk` and `k6` are system binaries — install them via your OS package
+# manager (see bench/README.md). This file exists so CI can `pip install -r`
+# without failing and so optional pretty-print deps have a home.
+#
+# Optional: nicer TTY tables when available.
+# rich>=13.0

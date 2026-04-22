@@ -1,0 +1,15 @@
+---
+# ftw-overrides-fastapi.yaml — FastAPI-specific overrides.
+#
+# Format: see ../ftw-overrides.yaml for the schema and review rules.
+# Tags:   [fastapi-<area>] — the reason MUST cite what FastAPI /
+#         Starlette / Uvicorn does differently from the CRS/Apache
+#         baseline. Examples of valid areas: [fastapi-asgi],
+#         [fastapi-routing], [fastapi-parser].
+#
+# Adding an override without a tag, or with a generic "fails" reason,
+# will be rejected at review. If the failure is really an upstream
+# engine bug, move it to ../ftw-overrides.yaml under [upstream-coraza]
+# or [engine] and file a tracking issue.
+
+overrides: []
