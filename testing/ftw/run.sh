@@ -281,8 +281,22 @@ fi
 # ---- 6. Run go-ftw --------------------------------------------------
 OUT_JSON="${BUILD_DIR}/ftw-result-${FRAMEWORK}.json"
 
+# Point every test at our running example adapter. CRS test YAMLs
+# hardcode `dest_addr: 127.0.0.1` and `port: 80` in the input block;
+# testoverride.input rewrites those in-memory without touching upstream.
+FTW_CONFIG="${BUILD_DIR}/ftw-config-${FRAMEWORK}.yaml"
+cat > "${FTW_CONFIG}" <<EOF
+---
+testoverride:
+  input:
+    dest_addr: 127.0.0.1
+    port: ${PORT}
+    protocol: http
+EOF
+
 set +e
 "${FTW_BIN}" run \
+  --config "${FTW_CONFIG}" \
   --dir "${CRS_TESTS_DIR}" \
   --overrides "${COMBINED_OVR}" \
   --debug=false \
