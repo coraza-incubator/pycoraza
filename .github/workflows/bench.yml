@@ -165,7 +165,8 @@ jobs:
 
       - name: Advisory note (manual dispatch)
         if: github.event_name == 'workflow_dispatch'
-        run: echo "workflow_dispatch: advisory run, RPS gate skipped. k6 missed-attacks gate still applied."
+        run: |
+          echo "workflow_dispatch advisory run - RPS gate skipped. k6 missed-attacks gate still applied."
 
       - name: Upload bench artifacts
         if: always()

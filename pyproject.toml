@@ -3,6 +3,7 @@ requires = [
     "hatchling>=1.25",
     "hatch-fancy-pypi-readme>=24.1",
     "cffi>=1.17",
+    "setuptools>=68",
 ]
 build-backend = "hatchling.build"
 
