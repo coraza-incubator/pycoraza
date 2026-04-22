@@ -25,7 +25,7 @@ GIL contract:
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from .types import Interruption
@@ -322,10 +322,8 @@ def _from_c(ffi: FFI, ptr: Any) -> str | None:
     return ffi.string(ptr).decode("utf-8", errors="replace")
 
 
-from collections.abc import Callable as _Callable
-
-ErrorCallback = _Callable[[int, str], None]
-DebugCallback = _Callable[[int, str, str], None]
+ErrorCallback = Callable[[int, str], None]
+DebugCallback = Callable[[int, str, str], None]
 
 
 __all__ = ["Abi", "CorazaError"]

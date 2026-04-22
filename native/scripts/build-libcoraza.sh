@@ -82,6 +82,9 @@ build_libcoraza() {
   local dir="${NATIVE_DIR}/libcoraza"
   mkdir -p "${LIBCORAZA_PREFIX}"
   pushd "${dir}" >/dev/null
+  # Upstream Makefile.am requires a ChangeLog file but upstream repo
+  # doesn't ship one. `automake` fails without it.
+  [[ -f ChangeLog ]] || touch ChangeLog
   if [[ -x build.sh ]]; then
     ./build.sh
   fi
