@@ -98,6 +98,30 @@ if not _native_extension_present():
     )
 
 
+def _crs_rules_loaded() -> bool:
+    """Confirm CRS .conf files are on disk and the WAF loads them.
+
+    E2E tests assume the full CRS corpus is installed; when the rules
+    aren't fetched (typical of dev boxes or CI jobs that skipped the
+    CRS-fetch step), skip instead of flaking on 'all attacks returned
+    200' because the engine scanned against an empty rule set.
+    """
+    rules_dir = REPO_ROOT / "src" / "pycoraza" / "coreruleset" / "rules" / "rules"
+    if not rules_dir.is_dir():
+        return False
+    confs = list(rules_dir.glob("*.conf"))
+    return len(confs) >= 10
+
+
+if not _crs_rules_loaded():
+    pytest.skip(
+        "CRS rules not on disk; curl the coreruleset tarball into "
+        "src/pycoraza/coreruleset/rules/rules/ or run "
+        "./native/scripts/build-libcoraza.sh to populate them",
+        allow_module_level=True,
+    )
+
+
 pytest.importorskip("httpx")
 
 

@@ -42,6 +42,8 @@ class TestWAFError:
 
 class TestNonHTTP:
     def test_non_http_scope_passes_through(self, fake_abi: FakeLib) -> None:
+        import asyncio
+
         from pycoraza.starlette import CorazaMiddleware as MW
         waf = create_waf(WAFConfig(rules="SecRuleEngine On\n"))
 
@@ -50,18 +52,17 @@ class TestNonHTTP:
         async def inner(scope, receive, send):
             captured.append(scope["type"])
 
-        mw = MW(inner, waf=waf)
-        import asyncio
-
         async def noop_receive():
             return {"type": "lifespan.startup"}
 
         async def noop_send(_m):
             return None
 
-        asyncio.get_event_loop().run_until_complete(
-            mw({"type": "lifespan"}, noop_receive, noop_send)
-        )
+        async def drive():
+            mw = MW(inner, waf=waf)
+            await mw({"type": "lifespan"}, noop_receive, noop_send)
+
+        asyncio.run(drive())
         assert captured == ["lifespan"]
 
 
