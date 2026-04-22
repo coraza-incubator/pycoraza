@@ -75,11 +75,11 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jptosso/pycoraza"
-Documentation = "https://jptosso.github.io/pycoraza"
-Repository = "https://github.com/jptosso/pycoraza"
-Issues = "https://github.com/jptosso/pycoraza/issues"
-Changelog = "https://github.com/jptosso/pycoraza/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/coraza-incubator/pycoraza"
+Documentation = "https://coraza-incubator.github.io/pycoraza"
+Repository = "https://github.com/coraza-incubator/pycoraza"
+Issues = "https://github.com/coraza-incubator/pycoraza/issues"
+Changelog = "https://github.com/coraza-incubator/pycoraza/blob/main/CHANGELOG.md"
 
 [tool.hatch.metadata.hooks.fancy-pypi-readme]
 content-type = "text/markdown"
@@ -206,7 +206,7 @@ filename = "CHANGELOG.md"
 package = "pycoraza"
 package_dir = "src"
 title_format = "## [{version}] - {project_date}"
-issue_format = "[#{issue}](https://github.com/jptosso/pycoraza/issues/{issue})"
+issue_format = "[#{issue}](https://github.com/coraza-incubator/pycoraza/issues/{issue})"
 underlines = ["", "", ""]
 
 [[tool.towncrier.type]]

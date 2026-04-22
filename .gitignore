@@ -1,13 +1,11 @@
+# -----------------------------------------------------------------------
+# Python
+# -----------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-*.dylib
-*.dll
 *.egg-info/
-build/
-dist/
-wheelhouse/
+*.egg
 .eggs/
 .pytest_cache/
 .coverage
@@ -19,34 +17,95 @@ htmlcov/
 .ruff_cache/
 .venv/
 venv/
+env/
 .env
+.env.*
+!.env.example
 
-native/libcoraza/build/
-native/libcoraza/.libs/
-native/libcoraza/autom4te.cache/
-native/libcoraza/config.log
-native/libcoraza/config.status
-native/libcoraza/Makefile
-native/libcoraza/libtool
-native/libcoraza/stamp-h1
-src/pycoraza/_vendor/libcoraza*
-src/pycoraza.libs/
+# -----------------------------------------------------------------------
+# Build outputs
+# -----------------------------------------------------------------------
+build/
+dist/
+wheelhouse/
+*.whl
+*.tar.gz
+
+# -----------------------------------------------------------------------
+# Native extensions & shared libraries
+# -----------------------------------------------------------------------
+*.so
+*.dylib
+*.dll
+*.pyd
+*.o
+*.a
+*.lo
+*.la
+
 _pycoraza*.so
 _pycoraza*.pyd
+src/pycoraza/_vendor/libcoraza*
+src/pycoraza.libs/
+src/pycoraza/_bindings/*.c
+src/pycoraza/_bindings/*.o
 
-docs/_build/
-docs/site/_generated/
+# -----------------------------------------------------------------------
+# libcoraza vendored sources + autotools artifacts
+# (libcoraza itself is a git submodule / on-demand clone; never commit
+# its generated files or install tree)
+# -----------------------------------------------------------------------
+native/libcoraza/
+native/build/
 
+# -----------------------------------------------------------------------
+# CRS rules — fetched at build time from coreruleset/coreruleset
+# (versioned via native/version.txt, never committed)
+# -----------------------------------------------------------------------
+src/pycoraza/coreruleset/rules/rules/
+src/pycoraza/coreruleset/rules/crs-setup.conf.example
+src/pycoraza/coreruleset/rules/.crs-tag
+
+# -----------------------------------------------------------------------
+# Local dev / test artifacts
+# -----------------------------------------------------------------------
 bench/results/
 testing/ftw/build/
 testing/ftw/crs/
 testing/ftw/go-ftw
 
+# Docs generator output
+docs/_build/
+docs/site/_generated/
+
+# towncrier draft fragments — real fragments live under news/*.md
 news/+*.md
 
-# local build artifacts (regenerated from sources)
-native/libcoraza/
-build/
-src/pycoraza/coreruleset/rules/rules/
-src/pycoraza/coreruleset/rules/crs-setup.conf.example
-src/pycoraza/coreruleset/rules/.crs-tag
+# -----------------------------------------------------------------------
+# Editor / OS / tooling
+# -----------------------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+*.bak
+*.tmp
+*.orig
+
+# -----------------------------------------------------------------------
+# AI agents / local tooling config (per-machine, never share)
+# -----------------------------------------------------------------------
+.claude/
+.aider*
+.cursor/
+
+# -----------------------------------------------------------------------
+# Logs & profiles
+# -----------------------------------------------------------------------
+*.log
+*.pid
+*.prof
+*.pstats

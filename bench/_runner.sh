@@ -18,13 +18,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RESULTS="${ROOT}/bench/results"
 mkdir -p "${RESULTS}"
 
-PYTHON="${PYTHON:-/home/jptosso/.pyenv/shims/python3.13}"
+PYTHON="${PYTHON:-python3}"
+GUNICORN="${GUNICORN:-gunicorn}"
 DURATION="${DURATION:-15s}"
 CONNS="${CONNS:-50}"
 WORKERS="${WORKERS:-4}"
 
 case "$FW" in
-  flask)     PORT=5000; SERVER="/home/jptosso/.local/bin/gunicorn --workers ${WORKERS} --worker-class sync -b 127.0.0.1:${PORT} --chdir ${ROOT}/examples/flask_app --access-logfile /dev/null --error-logfile - app:app" ;;
+  flask)     PORT=5000; SERVER="${GUNICORN} --workers ${WORKERS} --worker-class sync -b 127.0.0.1:${PORT} --chdir ${ROOT}/examples/flask_app --access-logfile /dev/null --error-logfile - app:app" ;;
   fastapi)   PORT=5001; SERVER="${PYTHON} -m uvicorn --app-dir ${ROOT}/examples/fastapi_app --workers ${WORKERS} --log-level warning --no-access-log --host 127.0.0.1 --port ${PORT} app:app" ;;
   starlette) PORT=5002; SERVER="${PYTHON} -m uvicorn --app-dir ${ROOT}/examples/starlette_app --workers ${WORKERS} --log-level warning --no-access-log --host 127.0.0.1 --port ${PORT} app:app" ;;
   *) echo "unknown framework $FW" >&2; exit 2 ;;

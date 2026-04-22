@@ -6,11 +6,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export LD_LIBRARY_PATH="${ROOT}/build/libcoraza/lib"
 export PYTHONPATH="${ROOT}/src"
 
+PYTHON="${PYTHON:-python3}"
+GUNICORN="${GUNICORN:-gunicorn}"
+
 for fw in flask fastapi starlette; do
   case "$fw" in
-    flask)     PORT=5000; CMD="/home/jptosso/.local/bin/gunicorn --workers 2 --worker-class sync -b 127.0.0.1:${PORT} --chdir ${ROOT}/examples/flask_app --access-logfile /dev/null --error-logfile /dev/null app:app" ;;
-    fastapi)   PORT=5001; CMD="/usr/bin/python3.10 -m uvicorn --app-dir ${ROOT}/examples/fastapi_app --workers 2 --log-level warning --no-access-log --host 127.0.0.1 --port ${PORT} app:app" ;;
-    starlette) PORT=5002; CMD="/usr/bin/python3.10 -m uvicorn --app-dir ${ROOT}/examples/starlette_app --workers 2 --log-level warning --no-access-log --host 127.0.0.1 --port ${PORT} app:app" ;;
+    flask)     PORT=5000; CMD="${GUNICORN} --workers 2 --worker-class sync -b 127.0.0.1:${PORT} --chdir ${ROOT}/examples/flask_app --access-logfile /dev/null --error-logfile /dev/null app:app" ;;
+    fastapi)   PORT=5001; CMD="${PYTHON} -m uvicorn --app-dir ${ROOT}/examples/fastapi_app --workers 2 --log-level warning --no-access-log --host 127.0.0.1 --port ${PORT} app:app" ;;
+    starlette) PORT=5002; CMD="${PYTHON} -m uvicorn --app-dir ${ROOT}/examples/starlette_app --workers 2 --log-level warning --no-access-log --host 127.0.0.1 --port ${PORT} app:app" ;;
   esac
 
   export PYCORAZA_PORT="${PORT}"

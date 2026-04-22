@@ -4,7 +4,7 @@
 
 Please report security vulnerabilities **privately** via one of:
 
-- GitHub Security Advisories: https://github.com/jptosso/pycoraza/security/advisories/new
+- GitHub Security Advisories: https://github.com/coraza-incubator/pycoraza/security/advisories/new
 - Email: jptosso@gmail.com
 
 Do **not** open a public issue for security vulnerabilities.
