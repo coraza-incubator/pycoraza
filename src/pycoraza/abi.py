@@ -319,7 +319,10 @@ def _utf8(s: str) -> bytes:
 def _from_c(ffi: FFI, ptr: Any) -> str | None:
     if ptr == ffi.NULL or not ptr:
         return None
-    return ffi.string(ptr).decode("utf-8", errors="replace")
+    raw = ffi.string(ptr)
+    if isinstance(raw, bytes):
+        return raw.decode("utf-8", errors="replace")
+    return str(raw)
 
 
 ErrorCallback = Callable[[int, str], None]
