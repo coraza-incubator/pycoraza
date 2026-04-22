@@ -1,6 +1,9 @@
 LIBCORAZA_TAG=main
-CORAZA_TAG=v3.3.3
-CRS_TAG=v4.11.0
+# Informational only; the real Coraza version is whatever
+# native/libcoraza/go.mod pins (authoritative). As of LIBCORAZA_TAG=main
+# that is v3.7.0.
+CORAZA_TAG=v3.7.0
+CRS_TAG=v4.25.0
 GO_VERSION=1.25.3
 SWIG_VERSION=4.2.1
 GO_FTW_VERSION=v2.1.1
