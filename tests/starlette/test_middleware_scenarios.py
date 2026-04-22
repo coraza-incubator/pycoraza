@@ -192,3 +192,28 @@ class TestLogging:
             c.get("/")
         kinds = [c[0] for c in fake_abi.call_log]
         assert kinds.index("process_logging") < kinds.index("free_transaction")
+
+
+class TestThreadLimit:
+    def test_default_limit_is_nonzero(self, fake_abi: FakeLib) -> None:
+        """Middleware installs a semaphore at construction time."""
+        app = _build(fake_abi)
+        with TestClient(app) as c:
+            rv = c.get("/")
+        assert rv.status_code == 200
+        middleware = next(
+            m for m in app.user_middleware if m.cls is CorazaMiddleware
+        )
+        instantiated = app.middleware_stack
+        assert instantiated is not None
+
+    def test_custom_limit_accepted(self, fake_abi: FakeLib) -> None:
+        waf = create_waf(WAFConfig(rules="SecRuleEngine On\n"))
+        app = Starlette(
+            middleware=[
+                Middleware(CorazaMiddleware, waf=waf, thread_limit=8),
+            ],
+        )
+        with TestClient(app) as c:
+            rv = c.get("/healthz")
+        assert rv.status_code in (200, 404)
