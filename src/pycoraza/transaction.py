@@ -92,6 +92,8 @@ class Transaction:
         self._waf.abi.add_request_headers(self.handle, headers)
 
     def process_request_headers(self) -> bool:
+        if self._cached_interruption is not None:
+            return True
         self._waf.abi.process_request_headers(self.handle)
         return self._check_interruption()
 
@@ -101,6 +103,8 @@ class Transaction:
             self._request_body_started = True
 
     def process_request_body(self) -> bool:
+        if self._cached_interruption is not None:
+            return True
         self._waf.abi.process_request_body(self.handle)
         return self._check_interruption()
 
@@ -127,6 +131,8 @@ class Transaction:
         return self.process_request_body()
 
     def process_response_headers(self, status: int, protocol: str = "HTTP/1.1") -> bool:
+        if self._cached_interruption is not None:
+            return True
         self._waf.abi.process_response_headers(self.handle, status, protocol)
         return self._check_interruption()
 
@@ -142,6 +148,8 @@ class Transaction:
             self._response_body_started = True
 
     def process_response_body(self) -> bool:
+        if self._cached_interruption is not None:
+            return True
         self._waf.abi.process_response_body(self.handle)
         return self._check_interruption()
 

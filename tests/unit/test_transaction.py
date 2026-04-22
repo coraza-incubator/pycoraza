@@ -100,6 +100,28 @@ class TestRequestPipeline:
         tx.close()
         waf.close()
 
+    def test_phase_calls_short_circuit_after_interrupt(self, fake_abi: FakeLib) -> None:
+        """Once a phase interrupts, subsequent phase calls must NOT invoke libcoraza.
+
+        Prevents wasted CRS evaluation on a transaction that has
+        already been flagged for block.
+        """
+        fake_abi.trigger_uri_contains = "/attack"
+        waf = _make_waf()
+        tx = waf.new_transaction()
+        tx.process_connection("127.0.0.1", 0)
+        tx.process_uri("/attack", "GET", "HTTP/1.1")
+        assert tx.process_request_headers() is True
+        fake_abi.call_log.clear()
+        assert tx.process_request_body() is True
+        assert not any(c[0] == "process_request_body" for c in fake_abi.call_log)
+        assert tx.process_response_headers(200) is True
+        assert not any(c[0] == "process_response_headers" for c in fake_abi.call_log)
+        assert tx.process_response_body() is True
+        assert not any(c[0] == "process_response_body" for c in fake_abi.call_log)
+        tx.close()
+        waf.close()
+
     def test_append_request_body_skips_empty(self, fake_abi: FakeLib) -> None:
         waf = _make_waf()
         tx = waf.new_transaction()
