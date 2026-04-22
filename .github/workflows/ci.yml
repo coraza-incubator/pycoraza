@@ -99,6 +99,9 @@ jobs:
       - name: Unit + integration tests with coverage
         run: pytest --cov --cov-report=xml --cov-fail-under=90 tests/
 
+      - name: E2E tests (real libcoraza, real HTTP)
+        run: pytest tests/e2e -v --no-cov
+
       - name: Upload coverage to Codecov
         if: matrix.python == '3.12'
         uses: codecov/codecov-action@v4

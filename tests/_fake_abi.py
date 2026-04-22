@@ -149,6 +149,7 @@ class FakeLib:
         self.interruption_spec = _InterventionSpec()
 
         self.raise_on_new_waf: bool = False
+        self.raise_on_new_waf_config: bool = False
         self.raise_on_new_transaction: bool = False
         self.raise_on_process_uri: bool = False
         self.fail_rc_for: set[str] = set()
@@ -163,6 +164,9 @@ class FakeLib:
         return -1 if op in self.fail_rc_for else 0
 
     def coraza_new_waf_config(self) -> Any:
+        if self.raise_on_new_waf_config:
+            self._log("new_waf_config_null")
+            return None
         cfg = _FakeCData(b"cfg")
         self.configs[id(cfg)] = _ConfigState()
         self._log("new_waf_config")
