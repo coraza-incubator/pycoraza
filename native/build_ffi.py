@@ -9,11 +9,21 @@ This module is both:
 The produced extension is `pycoraza._bindings._pycoraza`. It is linked
 against libcoraza so that `auditwheel repair` bundles `libcoraza.so`
 into `pycoraza.libs/` automatically.
+
+Compile flow note:
+  `cffi.FFI.compile(tmpdir=T)` creates `T/<module-path>/_pycoraza*.so`
+  — it uses the module name's dots as directory separators. So if the
+  module is `pycoraza._bindings._pycoraza`, compiling into
+  `src/pycoraza/_bindings/` produces
+  `src/pycoraza/_bindings/pycoraza/_bindings/_pycoraza*.so` (nested).
+  We compile into a staging dir, then move the final .so to its
+  proper home under `src/pycoraza/_bindings/`.
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -27,6 +37,7 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 CDEF_PATH = HERE / "coraza_cdef.h"
 MODULE_NAME = "pycoraza._bindings._pycoraza"
+BINDINGS_DIR = REPO_ROOT / "src" / "pycoraza" / "_bindings"
 
 
 def _libcoraza_prefix() -> Path:
@@ -40,7 +51,7 @@ def _read_cdef() -> str:
     return CDEF_PATH.read_text(encoding="utf-8")
 
 
-def build_ffi() -> cffi.FFI:  # type: ignore[name-defined]
+def build_ffi():  # type: ignore[no-untyped-def]
     import cffi
 
     prefix = _libcoraza_prefix()
@@ -66,11 +77,29 @@ def build_ffi() -> cffi.FFI:  # type: ignore[name-defined]
     return ffi
 
 
-def compile_extension(target_dir: Path) -> Path:
+def compile_extension(staging_dir: Path) -> Path:
+    """Compile the cffi extension and return the final .so path.
+
+    Compiles into `staging_dir`, then moves the extension to
+    `src/pycoraza/_bindings/` where `pycoraza._bindings.__init__`
+    imports it from. Nested pycoraza/_bindings/ subdirs cffi left
+    behind in the staging tree are cleaned up.
+    """
+    staging_dir.mkdir(parents=True, exist_ok=True)
     ffi = build_ffi()
-    target_dir.mkdir(parents=True, exist_ok=True)
-    out = ffi.compile(tmpdir=str(target_dir), verbose=True)
-    return Path(out)
+    out = Path(ffi.compile(tmpdir=str(staging_dir), verbose=True))
+
+    BINDINGS_DIR.mkdir(parents=True, exist_ok=True)
+    final = BINDINGS_DIR / out.name
+    shutil.copy2(out, final)
+
+    # Clean up the nested pycoraza/_bindings/ tree cffi created inside
+    # staging — we only want the .so at its canonical location.
+    leftover = staging_dir / "pycoraza"
+    if leftover.exists() and leftover != BINDINGS_DIR.parent:
+        shutil.rmtree(leftover, ignore_errors=True)
+
+    return final
 
 
 class CustomBuildHook(BuildHookInterface):
@@ -79,8 +108,10 @@ class CustomBuildHook(BuildHookInterface):
     PLUGIN_NAME = "custom"
 
     def initialize(self, version: str, build_data: dict) -> None:
-        target = REPO_ROOT / "src" / "pycoraza" / "_bindings"
-        out = compile_extension(target)
+        # Stage into hatch's build dir so repeated rebuilds don't fight
+        # over a shared on-disk tree.
+        staging = Path(self.directory) / "pycoraza-ffi-staging"
+        out = compile_extension(staging)
         rel = out.relative_to(REPO_ROOT / "src")
         build_data["force_include"][str(out)] = str(rel)
         build_data.setdefault("pure_python", False)
@@ -88,6 +119,6 @@ class CustomBuildHook(BuildHookInterface):
 
 
 if __name__ == "__main__":
-    target = REPO_ROOT / "src" / "pycoraza" / "_bindings"
-    out = compile_extension(target)
+    staging = REPO_ROOT / "build" / "ffi-staging"
+    out = compile_extension(staging)
     sys.stdout.write(f"built: {out}\n")
