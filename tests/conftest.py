@@ -16,8 +16,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _fake_abi import FakeLib, install_fake_bindings  # noqa: E402
-
+from _fake_abi import FakeLib, install_fake_bindings
 
 _fake = install_fake_bindings()
 

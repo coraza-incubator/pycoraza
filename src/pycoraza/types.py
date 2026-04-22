@@ -42,7 +42,7 @@ class WAFConfig:
 
     rules: str
     mode: ProcessMode = ProcessMode.DETECT
-    logger: "Logger | None" = None
+    logger: Logger | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -71,7 +71,7 @@ class RequestInfo:
 
     method: str
     url: str
-    headers: "Iterable[tuple[str, str]]"
+    headers: Iterable[tuple[str, str]]
     protocol: str = "HTTP/1.1"
     remote_addr: str = ""
     remote_port: int = 0
@@ -83,7 +83,7 @@ class ResponseInfo:
     """HTTP response metadata passed into Coraza for phase 3+4 evaluation."""
 
     status: int
-    headers: "Iterable[tuple[str, str]]"
+    headers: Iterable[tuple[str, str]]
     protocol: str = "HTTP/1.1"
 
 
@@ -151,11 +151,11 @@ PROBE_METHODS: tuple[str, ...] = ("HEAD", "OPTIONS")
 
 
 __all__ = [
+    "PROBE_METHODS",
+    "PROBE_PATHS",
     "Interruption",
     "MatchedRule",
     "OnWAFError",
-    "PROBE_METHODS",
-    "PROBE_PATHS",
     "ProcessMode",
     "RequestInfo",
     "ResponseInfo",

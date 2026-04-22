@@ -27,16 +27,16 @@ class Transaction:
     """
 
     __slots__ = (
-        "_waf",
-        "_tx",
-        "_lock",
+        "_cached_interruption",
         "_closed",
+        "_lock",
         "_request_body_started",
         "_response_body_started",
-        "_cached_interruption",
+        "_tx",
+        "_waf",
     )
 
-    def __init__(self, waf: "WAF", tx_handle: object) -> None:
+    def __init__(self, waf: WAF, tx_handle: object) -> None:
         self._waf = waf
         self._tx = tx_handle
         self._lock = threading.Lock()
@@ -62,7 +62,7 @@ class Transaction:
         return True
 
     @property
-    def waf(self) -> "WAF":
+    def waf(self) -> WAF:
         return self._waf
 
     @property
@@ -191,7 +191,7 @@ class Transaction:
             finally:
                 self._closed = True
 
-    def __enter__(self) -> "Transaction":
+    def __enter__(self) -> Transaction:
         return self
 
     def __exit__(self, *_exc: object) -> None:

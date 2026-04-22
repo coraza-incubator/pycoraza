@@ -23,13 +23,12 @@ _SHARED_DIR = Path(__file__).resolve().parent.parent / "shared"
 if _SHARED_DIR.is_dir() and str(_SHARED_DIR) not in sys.path:
     sys.path.insert(0, str(_SHARED_DIR))
 
+import pycoraza_shared as shared
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
 from pycoraza import ProcessMode, WAFConfig, create_waf
 from pycoraza.fastapi import CorazaMiddleware
-
-import pycoraza_shared as shared
 
 ADAPTER_NAME = "fastapi"
 FTW = shared.ftw_mode_enabled()

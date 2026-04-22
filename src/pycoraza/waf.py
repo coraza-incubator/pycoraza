@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 class WAF:
     """A Coraza WAF. Create via `create_waf(config)`, not by hand."""
 
-    __slots__ = ("_abi", "_waf", "_mode", "_logger", "_lock", "_closed")
+    __slots__ = ("_abi", "_closed", "_lock", "_logger", "_mode", "_waf")
 
     def __init__(self, abi: Abi, waf_handle: object, mode: ProcessMode, logger: Logger) -> None:
         self._abi = abi
@@ -47,7 +47,7 @@ class WAF:
     def rules_count(self) -> int:
         return self._abi.rules_count(self.handle)
 
-    def new_transaction(self, tx_id: str | None = None) -> "Transaction":
+    def new_transaction(self, tx_id: str | None = None) -> Transaction:
         from .transaction import Transaction
 
         tx_handle = self._abi.new_transaction(self.handle, tx_id)
@@ -62,7 +62,7 @@ class WAF:
             finally:
                 self._closed = True
 
-    def __enter__(self) -> "WAF":
+    def __enter__(self) -> WAF:
         return self
 
     def __exit__(self, *_exc: object) -> None:

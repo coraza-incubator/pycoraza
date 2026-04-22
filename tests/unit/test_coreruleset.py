@@ -7,15 +7,15 @@ from pathlib import Path
 import pytest
 
 from pycoraza.coreruleset import (
-    CrsOptions,
     PYTHON_WEB_INCLUDES,
+    CrsOptions,
+    _profiles,
     balanced,
     permissive,
     python_web,
     recommended,
     strict,
 )
-from pycoraza.coreruleset import _profiles
 
 
 @pytest.fixture

@@ -11,12 +11,11 @@ HEAD/OPTIONS requests without forcing the adapter to parse it twice.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Union
 
 from .types import SkipOptions
 
 SkipPredicate = Callable[[str, str], bool]
-SkipArg = Union[SkipOptions, SkipPredicate, bool, None]
+SkipArg = SkipOptions | SkipPredicate | bool | None
 
 
 def build_skip_predicate(arg: SkipArg) -> SkipPredicate:

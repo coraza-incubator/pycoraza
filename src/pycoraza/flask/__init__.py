@@ -37,7 +37,7 @@ class CorazaMiddleware:
         self,
         app: WSGIApp,
         *,
-        waf: "WAF",
+        waf: WAF,
         on_block: OnBlock | None = None,
         inspect_response: bool = False,
         on_waf_error: OnWAFError | str = OnWAFError.BLOCK,
@@ -104,7 +104,7 @@ def _default_on_block(
         f'{{"error":"blocked","rule_id":{interruption.rule_id},'
         f'"action":{_json_str(interruption.action)},'
         f'"data":{_json_str(interruption.data)}}}'
-    ).encode("utf-8")
+    ).encode()
     reason = "Blocked" if status < 500 else "Error"
     start_response(
         f"{status} {reason}",
@@ -180,9 +180,9 @@ def _iter_wsgi_headers(environ: WSGIEnviron) -> Iterable[tuple[str, str]]:
 
 
 class _CaptureStartResponse:
-    __slots__ = ("status", "headers", "_real", "_tx", "_inspect")
+    __slots__ = ("_inspect", "_real", "_tx", "headers", "status")
 
-    def __init__(self, real: WSGIStartResponse, tx: "Transaction", inspect: bool) -> None:
+    def __init__(self, real: WSGIStartResponse, tx: Transaction, inspect: bool) -> None:
         self._real = real
         self._tx = tx
         self._inspect = inspect
@@ -213,7 +213,7 @@ def _capture_response(
     app: WSGIApp,
     environ: WSGIEnviron,
     start_response: WSGIStartResponse,
-    tx: "Transaction",
+    tx: Transaction,
     inspect: bool,
     mode: ProcessMode,
 ) -> Iterable[bytes]:
@@ -238,7 +238,7 @@ def _capture_response(
     return buf
 
 
-def _finalize_now(body: Iterable[bytes], tx: "Transaction") -> list[bytes]:
+def _finalize_now(body: Iterable[bytes], tx: Transaction) -> list[bytes]:
     """Eagerly drain `body`, then run `process_logging` + `close` before return.
 
     Eager finalization trades streaming for deterministic audit/log emission —

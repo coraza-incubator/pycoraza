@@ -15,7 +15,6 @@ import threading
 from importlib import util as importlib_util
 
 import pytest
-
 from _fake_abi import FakeLib, _FakeCData
 
 from pycoraza.abi import Abi

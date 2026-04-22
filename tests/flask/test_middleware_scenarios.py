@@ -5,13 +5,11 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from _fake_abi import FakeLib
 
 flask = pytest.importorskip("flask")
 
 from pycoraza import ProcessMode, WAFConfig, create_waf
-from pycoraza.abi import CorazaError
 from pycoraza.flask import CorazaMiddleware
 
 
@@ -24,7 +22,7 @@ def _build(
     on_waf_error: str = "block",
     on_block=None,
     app_crashes: bool = False,
-) -> "flask.Flask":
+) -> flask.Flask:
     app = flask.Flask(__name__)
     app.config.update(TESTING=True)
 
@@ -33,22 +31,22 @@ def _build(
         return "ok"
 
     @app.route("/static/app.js")
-    def static_asset() -> "flask.Response":
+    def static_asset() -> flask.Response:
         return flask.Response("alert(1)", mimetype="application/javascript")
 
     @app.route("/echo", methods=["POST"])
-    def echo() -> "flask.Response":
+    def echo() -> flask.Response:
         return flask.Response(
             flask.request.get_data(), mimetype="application/octet-stream"
         )
 
     @app.route("/secret")
-    def secret() -> "flask.Response":
+    def secret() -> flask.Response:
         return flask.Response("secret leak here", mimetype="text/plain")
 
     if app_crashes:
         @app.errorhandler(500)
-        def five_hundred(_err: Exception) -> "flask.Response":
+        def five_hundred(_err: Exception) -> flask.Response:
             return flask.Response("boom", status=500)
 
     waf = create_waf(WAFConfig(rules="SecRuleEngine On\n", mode=mode))

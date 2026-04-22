@@ -26,7 +26,7 @@ class WAFPool:
     executes it.
     """
 
-    __slots__ = ("_waf", "_size")
+    __slots__ = ("_size", "_waf")
 
     def __init__(self, config: WAFConfig, *, size: int = 1) -> None:
         if size < 1:
@@ -52,7 +52,7 @@ class WAFPool:
     def close(self) -> None:
         self._waf.close()
 
-    def __enter__(self) -> "WAFPool":
+    def __enter__(self) -> WAFPool:
         return self
 
     def __exit__(self, *_exc: object) -> None:

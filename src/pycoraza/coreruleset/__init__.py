@@ -6,10 +6,10 @@ Rule `.conf` files ship under `pycoraza/coreruleset/rules/`; see
 """
 
 from ._profiles import (
+    PYTHON_WEB_INCLUDES,
     CrsCategory,
     CrsOptions,
     ParanoiaLevel,
-    PYTHON_WEB_INCLUDES,
     balanced,
     permissive,
     python_web,
@@ -18,10 +18,10 @@ from ._profiles import (
 )
 
 __all__ = [
+    "PYTHON_WEB_INCLUDES",
     "CrsCategory",
     "CrsOptions",
     "ParanoiaLevel",
-    "PYTHON_WEB_INCLUDES",
     "balanced",
     "permissive",
     "python_web",

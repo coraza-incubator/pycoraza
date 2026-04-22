@@ -149,10 +149,10 @@ def crs_profile(ftw: bool) -> str:
 
 
 __all__ = [
+    "SAMPLE_PNG",
     "FtwEchoInput",
     "HandlerResult",
     "RouteSpec",
-    "SAMPLE_PNG",
     "crs_profile",
     "echo",
     "ftw_echo_handler",

@@ -38,11 +38,11 @@ if TYPE_CHECKING:
 
 _INIT_LOCK = threading.Lock()
 _INITIALIZED = False
-_BINDINGS: "_BindingsLike | None" = None
+_BINDINGS: _BindingsLike | None = None
 
 
 class _BindingsLike(Protocol):
-    ffi: "FFI"
+    ffi: FFI
     lib: Any
 
 
@@ -75,7 +75,7 @@ class Abi:
     a singleton. `WAF` owns one reference and threads through.
     """
 
-    def __init__(self, logger: "Logger | None" = None) -> None:
+    def __init__(self, logger: Logger | None = None) -> None:
         b = _bindings()
         self._ffi = b.ffi
         self._lib = b.lib
@@ -83,7 +83,7 @@ class Abi:
         self._callback_refs: list[object] = []
 
     @property
-    def ffi(self) -> "FFI":
+    def ffi(self) -> FFI:
         return self._ffi
 
     @property
@@ -265,7 +265,7 @@ class Abi:
             self._lib.coraza_free_intervention(ptr)
 
     def register_error_callback(
-        self, cfg: Any, callback: "ErrorCallback"
+        self, cfg: Any, callback: ErrorCallback
     ) -> None:
         """Install an error callback.
 
@@ -292,7 +292,7 @@ class Abi:
             "coraza_add_error_callback",
         )
 
-    def register_debug_callback(self, cfg: Any, callback: "DebugCallback") -> None:
+    def register_debug_callback(self, cfg: Any, callback: DebugCallback) -> None:
         @self._ffi.callback(
             "void(void *, coraza_debug_log_level_t, const char *, const char *)"
         )
@@ -316,14 +316,16 @@ def _utf8(s: str) -> bytes:
     return s.encode("utf-8", errors="replace")
 
 
-def _from_c(ffi: "FFI", ptr: Any) -> str | None:
+def _from_c(ffi: FFI, ptr: Any) -> str | None:
     if ptr == ffi.NULL or not ptr:
         return None
     return ffi.string(ptr).decode("utf-8", errors="replace")
 
 
-ErrorCallback = "Callable[[int, str], None]"
-DebugCallback = "Callable[[int, str, str], None]"
+from collections.abc import Callable as _Callable
+
+ErrorCallback = _Callable[[int, str], None]
+DebugCallback = _Callable[[int, str, str], None]
 
 
 __all__ = ["Abi", "CorazaError"]

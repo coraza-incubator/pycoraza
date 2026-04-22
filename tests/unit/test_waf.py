@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from _fake_abi import FakeLib
 
 from pycoraza import CorazaError, ProcessMode, WAFConfig, create_waf, silent_logger

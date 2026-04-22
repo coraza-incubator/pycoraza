@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from _fake_abi import FakeLib
 
 flask = pytest.importorskip("flask")
@@ -12,7 +11,7 @@ from pycoraza import ProcessMode, WAFConfig, create_waf
 from pycoraza.flask import CorazaMiddleware
 
 
-def _make_app(mw_kwargs: dict | None = None, mode: ProcessMode = ProcessMode.BLOCK) -> "flask.Flask":
+def _make_app(mw_kwargs: dict | None = None, mode: ProcessMode = ProcessMode.BLOCK) -> flask.Flask:
     app = flask.Flask(__name__)
     app.config.update(TESTING=True)
 

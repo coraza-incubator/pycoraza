@@ -25,12 +25,11 @@ _SHARED_DIR = Path(__file__).resolve().parent.parent / "shared"
 if _SHARED_DIR.is_dir() and str(_SHARED_DIR) not in sys.path:
     sys.path.insert(0, str(_SHARED_DIR))
 
+import pycoraza_shared as shared
 from flask import Flask, Response, abort, request
 
 from pycoraza import ProcessMode, WAFConfig, create_waf
 from pycoraza.flask import CorazaMiddleware
-
-import pycoraza_shared as shared
 
 ADAPTER_NAME = "flask"
 FTW = shared.ftw_mode_enabled()

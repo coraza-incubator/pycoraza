@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from _fake_abi import FakeLib
 
 pytest.importorskip("starlette")

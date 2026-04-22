@@ -42,7 +42,7 @@ OnBlockAsync = Callable[[Interruption, Scope, Send], Awaitable[bool]]
 
 @dataclass(slots=True)
 class _RequestResult:
-    tx: "Transaction"
+    tx: Transaction
     interrupted: bool
     interruption: Interruption | None
 
@@ -64,7 +64,7 @@ class CorazaMiddleware:
         self,
         app: ASGIApp,
         *,
-        waf: "WAF",
+        waf: WAF,
         on_block: OnBlockAsync | None = None,
         inspect_response: bool = False,
         on_waf_error: OnWAFError | str = OnWAFError.BLOCK,
@@ -127,7 +127,7 @@ class CorazaMiddleware:
         finally:
             await self._finalize(tx)
 
-    async def _finalize(self, tx: "Transaction") -> None:
+    async def _finalize(self, tx: Transaction) -> None:
         try:
             await self._run_in_thread(_finalize_tx, tx)
         except CorazaError:
@@ -145,7 +145,7 @@ class CorazaMiddleware:
 
 
 def _evaluate_request(
-    waf: "WAF", request: RequestInfo, body: bytes
+    waf: WAF, request: RequestInfo, body: bytes
 ) -> _RequestResult:
     """Run the full phase-1+2 pipeline on a worker thread.
 
@@ -167,7 +167,7 @@ def _evaluate_request(
         raise
 
 
-def _finalize_tx(tx: "Transaction") -> None:
+def _finalize_tx(tx: Transaction) -> None:
     try:
         tx.process_logging()
     finally:
@@ -248,7 +248,7 @@ async def _default_block_response(intr: Interruption, send: Send) -> None:
         f'{{"error":"blocked","rule_id":{intr.rule_id},'
         f'"action":"{_escape(intr.action)}",'
         f'"data":"{_escape(intr.data)}"}}'
-    ).encode("utf-8")
+    ).encode()
     await send({
         "type": "http.response.start",
         "status": status,
@@ -265,12 +265,12 @@ def _escape(s: str) -> str:
 
 
 class _WrappedSend:
-    __slots__ = ("_real", "_tx", "_inspect", "_mode", "_run", "_blocked", "_response_started")
+    __slots__ = ("_blocked", "_inspect", "_mode", "_real", "_response_started", "_run", "_tx")
 
     def __init__(
         self,
         real: Send,
-        tx: "Transaction",
+        tx: Transaction,
         inspect: bool,
         mode: ProcessMode,
         run: Callable[..., Awaitable[Any]],
@@ -322,14 +322,14 @@ class _WrappedSend:
         await self._real(message)
 
 
-def _record_response_headers(tx: "Transaction", headers, status: int) -> None:
+def _record_response_headers(tx: Transaction, headers, status: int) -> None:
     tx.add_response_headers(headers)
     tx.process_response_headers(status)
 
 
 def _wrap_send(
     send: Send,
-    tx: "Transaction",
+    tx: Transaction,
     inspect: bool,
     mode: ProcessMode,
     run: Callable[..., Awaitable[Any]],

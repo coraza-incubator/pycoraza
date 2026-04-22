@@ -15,7 +15,6 @@ from pycoraza._signals import (
     snapshot_handlers,
 )
 
-
 pytestmark = pytest.mark.signals
 
 

@@ -22,11 +22,11 @@ from .pool import WAFPool, create_waf_pool
 from .skip import SkipArg, SkipPredicate, build_skip_predicate
 from .transaction import Transaction
 from .types import (
+    PROBE_METHODS,
+    PROBE_PATHS,
     Interruption,
     MatchedRule,
     OnWAFError,
-    PROBE_METHODS,
-    PROBE_PATHS,
     ProcessMode,
     RequestInfo,
     ResponseInfo,
@@ -38,14 +38,15 @@ from .waf import WAF, create_waf
 __version__ = "0.1.0"
 
 __all__ = [
+    "PROBE_METHODS",
+    "PROBE_PATHS",
+    "WAF",
     "Abi",
     "CorazaError",
     "Interruption",
     "Logger",
     "MatchedRule",
     "OnWAFError",
-    "PROBE_METHODS",
-    "PROBE_PATHS",
     "ProcessMode",
     "RequestInfo",
     "ResponseInfo",
@@ -53,7 +54,6 @@ __all__ = [
     "SkipOptions",
     "SkipPredicate",
     "Transaction",
-    "WAF",
     "WAFConfig",
     "WAFPool",
     "__version__",

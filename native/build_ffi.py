@@ -40,7 +40,7 @@ def _read_cdef() -> str:
     return CDEF_PATH.read_text(encoding="utf-8")
 
 
-def build_ffi() -> "cffi.FFI":  # type: ignore[name-defined]
+def build_ffi() -> cffi.FFI:  # type: ignore[name-defined]
     import cffi
 
     prefix = _libcoraza_prefix()

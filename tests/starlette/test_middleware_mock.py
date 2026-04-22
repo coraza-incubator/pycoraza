@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from _fake_abi import FakeLib
 
 pytest.importorskip("starlette")
@@ -11,7 +10,7 @@ pytest.importorskip("httpx")
 
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
-from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
