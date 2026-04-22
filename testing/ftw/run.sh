@@ -237,11 +237,31 @@ if [[ "${SKIP_BOOT}" != "1" ]]; then
     echo "missing example app: ${APP_ENTRY}" >&2
     exit 1
   fi
-  echo "[ftw] Starting examples/${FRAMEWORK}_app/app.py on :${PORT} (boot budget ${BOOT_TIMEOUT}s)..."
+
+  # Flask's dev server (`python app.py`) is too lenient with malformed
+  # HTTP — some CRS 920-family tests send weird request lines and the
+  # dev server responds with an HTML error page that go-ftw can't parse
+  # ("malformed HTTP status code 'HTML>'"). Launch Flask under gunicorn
+  # so we get a strict parser + clean 4xx responses. ASGI adapters use
+  # uvicorn via the example's `__main__` block, which is already strict.
+  case "${FRAMEWORK}" in
+    flask)
+      BOOT_CMD=(python -m gunicorn --workers 2 --worker-class sync
+                -b "127.0.0.1:${PORT}"
+                --chdir "${REPO_ROOT}/examples/flask_app"
+                --access-logfile /dev/null --error-logfile -
+                app:app)
+      ;;
+    *)
+      BOOT_CMD=(python "${APP_ENTRY}")
+      ;;
+  esac
+
+  echo "[ftw] Starting ${FRAMEWORK} on :${PORT} (boot budget ${BOOT_TIMEOUT}s)..."
   # `setsid` puts the child in its own session so `kill -PGID` during
   # cleanup catches any worker subprocesses (uvicorn reloaders, etc.).
   ( cd "${REPO_ROOT}" &&
-    setsid env FTW=1 PYCORAZA_PORT="${PORT}" python "${APP_ENTRY}" \
+    setsid env FTW=1 PYCORAZA_PORT="${PORT}" "${BOOT_CMD[@]}" \
       </dev/null \
       > "${BUILD_DIR}/${FRAMEWORK}.stdout.log" \
       2> "${BUILD_DIR}/${FRAMEWORK}.stderr.log" &
