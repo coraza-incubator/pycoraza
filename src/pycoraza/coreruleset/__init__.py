@@ -8,10 +8,11 @@ Rule `.conf` files ship under `pycoraza/coreruleset/rules/`; see
 from ._profiles import (
     CrsCategory,
     CrsOptions,
-    LanguageTag,
     ParanoiaLevel,
+    PYTHON_WEB_INCLUDES,
     balanced,
     permissive,
+    python_web,
     recommended,
     strict,
 )
@@ -19,10 +20,11 @@ from ._profiles import (
 __all__ = [
     "CrsCategory",
     "CrsOptions",
-    "LanguageTag",
     "ParanoiaLevel",
+    "PYTHON_WEB_INCLUDES",
     "balanced",
     "permissive",
+    "python_web",
     "recommended",
     "strict",
 ]

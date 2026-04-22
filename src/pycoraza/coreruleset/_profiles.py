@@ -1,15 +1,15 @@
 """SecLang profile helpers — parallel to `@coraza/coreruleset`.
 
-These emitters produce a string of SecLang directives that:
-  * Include the CRS setup file.
-  * Tune per-profile SecAction IDs (paranoia, anomaly thresholds).
-  * Include the full CRS rule corpus.
+Design rule: **files we won't use are never referenced**. Profiles emit
+`Include` directives for an explicit whitelist of rule files only.
+There is no "include everything then filter by language tag" path —
+that still costs a directory scan and could surface a file we never
+vetted.
 
-They assume the CRS rule files are bundled under
-`src/pycoraza/coreruleset/rules/` (fetched at build time by
-`native/scripts/build-libcoraza.sh`). `recommended()` and friends
-return absolute `Include <path>` directives that libcoraza's
-`coraza_rules_add` accepts.
+When CRS ships new rule families, they stay dark until an explicit
+change adds them to the appropriate whitelist. That is intentional:
+new rule families change perf and false-positive profiles, and those
+shifts should be visible in source control.
 """
 
 from __future__ import annotations
@@ -18,10 +18,6 @@ from dataclasses import dataclass, field
 from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Literal
-
-LanguageTag = Literal[
-    "php", "java", "dotnet", "nodejs", "iis", "generic"
-]
 
 ParanoiaLevel = Literal[1, 2, 3, 4]
 
@@ -34,11 +30,9 @@ CrsCategory = Literal[
 
 @dataclass(slots=True)
 class CrsOptions:
-    """Tuning knobs for a CRS profile. Mirrors coraza-node's `CrsOptions`."""
+    """Tuning knobs shared across every profile."""
 
     paranoia: ParanoiaLevel = 1
-    exclude: tuple[LanguageTag, ...] = ("php", "java", "dotnet")
-    outbound_exclude: tuple[LanguageTag, ...] = ("php", "java", "dotnet")
     inbound_anomaly_threshold: int = 5
     outbound_anomaly_threshold: int = 4
     anomaly_block: bool = True
@@ -47,6 +41,42 @@ class CrsOptions:
 
 
 _DEFAULT_PROFILE = CrsOptions()
+
+
+# Rule files we evaluate for Python web apps. Anything not listed here
+# is NEVER loaded into libcoraza — the engine cannot scan against a
+# rule that was never compiled in. Whitelist discipline is deliberate:
+# a CRS bump cannot silently add new rule work to the hot path.
+#
+# Dropped relative to upstream CRS v4.11:
+#   REQUEST-931 (RFI)         — mostly a PHP-class bug
+#   REQUEST-933 (PHP)         — PHP engine targets only
+#   REQUEST-934 (GENERIC)     — Node.js prototype pollution / template-injection
+#   RESPONSE-953 (PHP)
+#   RESPONSE-954 (IIS)
+# REQUEST-944-JAVA stays: Python apps commonly proxy to Java microservices.
+PYTHON_WEB_INCLUDES: tuple[str, ...] = (
+    "REQUEST-901-INITIALIZATION.conf",
+    "REQUEST-905-COMMON-EXCEPTIONS.conf",
+    "REQUEST-911-METHOD-ENFORCEMENT.conf",
+    "REQUEST-913-SCANNER-DETECTION.conf",
+    "REQUEST-920-PROTOCOL-ENFORCEMENT.conf",
+    "REQUEST-921-PROTOCOL-ATTACK.conf",
+    "REQUEST-922-MULTIPART-ATTACK.conf",
+    "REQUEST-930-APPLICATION-ATTACK-LFI.conf",
+    "REQUEST-932-APPLICATION-ATTACK-RCE.conf",
+    "REQUEST-941-APPLICATION-ATTACK-XSS.conf",
+    "REQUEST-942-APPLICATION-ATTACK-SQLI.conf",
+    "REQUEST-943-APPLICATION-ATTACK-SESSION-FIXATION.conf",
+    "REQUEST-944-APPLICATION-ATTACK-JAVA.conf",
+    "REQUEST-949-BLOCKING-EVALUATION.conf",
+    "RESPONSE-950-DATA-LEAKAGES.conf",
+    "RESPONSE-951-DATA-LEAKAGES-SQL.conf",
+    "RESPONSE-952-DATA-LEAKAGES-JAVA.conf",
+    "RESPONSE-955-WEB-SHELLS.conf",
+    "RESPONSE-959-BLOCKING-EVALUATION.conf",
+    "RESPONSE-980-CORRELATION.conf",
+)
 
 
 def _rules_dir() -> Path:
@@ -81,14 +111,6 @@ def _profile_actions(opts: CrsOptions) -> list[str]:
     return actions
 
 
-def _language_excluded(filename: str, excluded: tuple[LanguageTag, ...]) -> bool:
-    lowered = filename.lower()
-    for tag in excluded:
-        if f"-{tag}-" in lowered or lowered.endswith(f"-{tag}.conf"):
-            return True
-    return False
-
-
 def _category_excluded(filename: str, excluded: tuple[CrsCategory, ...]) -> bool:
     for cat in excluded:
         if filename.startswith(f"REQUEST-{cat}-") or filename.startswith(f"RESPONSE-{cat}-"):
@@ -96,25 +118,23 @@ def _category_excluded(filename: str, excluded: tuple[CrsCategory, ...]) -> bool
     return False
 
 
-def _crs_includes(opts: CrsOptions, base: Path) -> list[str]:
+def _whitelist_includes(
+    whitelist: tuple[str, ...], opts: CrsOptions, base: Path
+) -> list[str]:
     rules = base / "rules"
     if not rules.is_dir():
         return []
     out: list[str] = []
-    for conf in sorted(rules.glob("*.conf")):
-        name = conf.name
-        if name.startswith("RESPONSE-"):
-            if _language_excluded(name, opts.outbound_exclude):
-                continue
-        elif _language_excluded(name, opts.exclude):
-            continue
+    for name in whitelist:
         if _category_excluded(name, opts.exclude_categories):
             continue
-        out.append(_include(conf))
+        conf = rules / name
+        if conf.is_file():
+            out.append(_include(conf))
     return out
 
 
-def _build(opts: CrsOptions) -> str:
+def _build(whitelist: tuple[str, ...], opts: CrsOptions) -> str:
     base = _rules_dir()
     setup = base / "crs-setup.conf.example"
 
@@ -122,38 +142,65 @@ def _build(opts: CrsOptions) -> str:
     if setup.is_file():
         lines.append(_include(setup))
     lines.extend(_profile_actions(opts))
-    lines.extend(_crs_includes(opts, base))
+    lines.extend(_whitelist_includes(whitelist, opts, base))
     if opts.extra:
         lines.append(opts.extra)
     return "\n".join(lines) + "\n"
 
 
-def recommended(
+def python_web(
     paranoia: ParanoiaLevel = 1,
     *,
-    exclude: tuple[LanguageTag, ...] = _DEFAULT_PROFILE.exclude,
-    outbound_exclude: tuple[LanguageTag, ...] = _DEFAULT_PROFILE.outbound_exclude,
     inbound_anomaly_threshold: int = _DEFAULT_PROFILE.inbound_anomaly_threshold,
     outbound_anomaly_threshold: int = _DEFAULT_PROFILE.outbound_anomaly_threshold,
     anomaly_block: bool = True,
     exclude_categories: tuple[CrsCategory, ...] = (),
     extra: str = "",
 ) -> str:
-    """Balanced defaults suitable for most deployments."""
-    return _build(CrsOptions(
+    """Python-scoped CRS preset. Loads only `PYTHON_WEB_INCLUDES`.
+
+    Paranoia 1 with standard anomaly thresholds. Keep this as the
+    default for Flask/FastAPI/Starlette deployments unless you have
+    a concrete reason to load more rule families.
+    """
+    opts = CrsOptions(
         paranoia=paranoia,
-        exclude=exclude,
-        outbound_exclude=outbound_exclude,
         inbound_anomaly_threshold=inbound_anomaly_threshold,
         outbound_anomaly_threshold=outbound_anomaly_threshold,
         anomaly_block=anomaly_block,
         exclude_categories=exclude_categories,
         extra=extra,
-    ))
+    )
+    return _build(PYTHON_WEB_INCLUDES, opts)
+
+
+def recommended(
+    paranoia: ParanoiaLevel = 1,
+    *,
+    inbound_anomaly_threshold: int = _DEFAULT_PROFILE.inbound_anomaly_threshold,
+    outbound_anomaly_threshold: int = _DEFAULT_PROFILE.outbound_anomaly_threshold,
+    anomaly_block: bool = True,
+    exclude_categories: tuple[CrsCategory, ...] = (),
+    extra: str = "",
+) -> str:
+    """Default preset — alias for `python_web()`.
+
+    pycoraza targets Python web servers, so the "general" preset and
+    the "Python-scoped" preset are the same whitelist. Kept under the
+    `recommended` name for API parity with coraza-node.
+    """
+    return python_web(
+        paranoia=paranoia,
+        inbound_anomaly_threshold=inbound_anomaly_threshold,
+        outbound_anomaly_threshold=outbound_anomaly_threshold,
+        anomaly_block=anomaly_block,
+        exclude_categories=exclude_categories,
+        extra=extra,
+    )
 
 
 def balanced(**overrides: object) -> str:
-    """Alias for `recommended` with paranoia=2, stricter thresholds."""
+    """Paranoia 2, same whitelist, stricter defaults."""
     kwargs: dict[str, object] = {
         "paranoia": 2,
         "inbound_anomaly_threshold": 5,
@@ -189,10 +236,11 @@ def permissive(**overrides: object) -> str:
 __all__ = [
     "CrsCategory",
     "CrsOptions",
-    "LanguageTag",
     "ParanoiaLevel",
+    "PYTHON_WEB_INCLUDES",
     "balanced",
     "permissive",
+    "python_web",
     "recommended",
     "strict",
 ]

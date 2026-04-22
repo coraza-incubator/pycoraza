@@ -2,10 +2,58 @@
 
 How to pick and tune a CRS rule-set preset.
 
-pycoraza ships with four profile helpers that emit SecLang rules:
-`recommended()`, `balanced()`, `strict()`, and `permissive()`. This
-page explains what each one is for, the full `CrsOptions` surface,
-and how to layer in your own SecLang.
+pycoraza ships with five profile helpers that emit SecLang rules:
+`python_web()`, `recommended()`, `balanced()`, `strict()`, and
+`permissive()`. This page explains what each one is for, the full
+`CrsOptions` surface, and how to layer in your own SecLang.
+
+## `python_web()` — drops rules Python apps don't need
+
+Whitelist-based preset scoped to Python web servers. Unlike
+`recommended()` (which loads the full corpus then filters at runtime by
+language tag), `python_web()` emits `Include` directives ONLY for rule
+files known to apply to Python workloads — excluded files are never
+loaded into the engine, so the WAF never scans request data against
+them. Same policy-authored approach as coraza-node's
+`@coraza/coreruleset` presets.
+
+Dropped at build time relative to `recommended()`:
+
+- `REQUEST-931-APPLICATION-ATTACK-RFI` — Remote File Inclusion is mostly a PHP class of bug.
+- `REQUEST-933-APPLICATION-ATTACK-PHP` — PHP-specific attacks.
+- `REQUEST-934-APPLICATION-ATTACK-GENERIC` — Node.js prototype pollution / template injection.
+- `RESPONSE-953-DATA-LEAKAGES-PHP`, `RESPONSE-954-DATA-LEAKAGES-IIS`.
+
+Kept: REQUEST-901 / 905 / 911 / 913 / 920 / 921 / 922 / 930 (LFI) / 932
+(RCE) / 941 (XSS) / 942 (SQLi) / 943 / 944 (Java — your Python app may
+proxy to a Java backend) / 949; RESPONSE-950 / 951 / 952 / 955 / 959 / 980.
+
+Measured perf: ~11% faster per request on a benign GET at
+paranoia 1 versus `recommended()` (CRS v4.11: 550 → 539 rules; speedup
+comes from not evaluating ~10 families' regex scanners, not just
+bookkeeping).
+
+```python
+from pycoraza import create_waf, WAFConfig, ProcessMode
+from pycoraza.coreruleset import python_web
+
+waf = create_waf(WAFConfig(
+    rules=python_web(paranoia=1),
+    mode=ProcessMode.BLOCK,
+))
+```
+
+The full whitelist is exposed as
+`pycoraza.coreruleset.PYTHON_WEB_INCLUDES` — a tuple of rule-file
+names. Inspecting it is the canonical way to see what's loaded.
+
+Whitelist discipline: when CRS ships a new rule family, it does NOT
+get auto-pulled into `python_web()`. You decide whether to add it by
+editing `PYTHON_WEB_INCLUDES`. That's intentional — new rule families
+can be expensive, and they shouldn't silently land in production
+between upstream bumps.
+
+
 
 ## What is CRS?
 

@@ -8,8 +8,10 @@ import pytest
 
 from pycoraza.coreruleset import (
     CrsOptions,
+    PYTHON_WEB_INCLUDES,
     balanced,
     permissive,
+    python_web,
     recommended,
     strict,
 )
@@ -63,10 +65,10 @@ class TestRecommended:
         out = recommended(extra="SecRuleRemoveById 942100")
         assert out.strip().endswith("SecRuleRemoveById 942100")
 
-    def test_include_php_when_not_excluded(self, fake_rules_dir: Path) -> None:
-        out = recommended(exclude=(), outbound_exclude=())
-        assert "REQUEST-933-APPLICATION-ATTACK-PHP.conf" in out
-        assert "RESPONSE-953-DATA-LEAKAGES-PHP.conf" in out
+    def test_does_not_glob_rules_dir(self, fake_rules_dir: Path) -> None:
+        (fake_rules_dir / "rules" / "REQUEST-999-CUSTOM.conf").write_text("# custom")
+        out = recommended()
+        assert "REQUEST-999-CUSTOM.conf" not in out
 
 
 class TestBalanced:
@@ -92,9 +94,49 @@ class TestCrsOptions:
     def test_defaults(self) -> None:
         opts = CrsOptions()
         assert opts.paranoia == 1
-        assert "php" in opts.exclude
         assert opts.anomaly_block is True
         assert opts.exclude_categories == ()
+
+
+class TestPythonWeb:
+    def test_whitelist_is_nonempty(self) -> None:
+        assert len(PYTHON_WEB_INCLUDES) >= 15
+        for name in PYTHON_WEB_INCLUDES:
+            assert name.endswith(".conf")
+            assert name.startswith(("REQUEST-", "RESPONSE-"))
+
+    def test_drops_rfi_generic_php_iis(self, fake_rules_dir: Path) -> None:
+        (fake_rules_dir / "rules" / "REQUEST-931-APPLICATION-ATTACK-RFI.conf").write_text("# rfi")
+        (fake_rules_dir / "rules" / "REQUEST-934-APPLICATION-ATTACK-GENERIC.conf").write_text("# generic")
+        (fake_rules_dir / "rules" / "RESPONSE-954-DATA-LEAKAGES-IIS.conf").write_text("# iis")
+
+        out = python_web()
+        assert "REQUEST-931-APPLICATION-ATTACK-RFI.conf" not in out
+        assert "REQUEST-933-APPLICATION-ATTACK-PHP.conf" not in out
+        assert "REQUEST-934-APPLICATION-ATTACK-GENERIC.conf" not in out
+        assert "RESPONSE-953-DATA-LEAKAGES-PHP.conf" not in out
+        assert "RESPONSE-954-DATA-LEAKAGES-IIS.conf" not in out
+
+    def test_keeps_xss_sqli_lfi(self, fake_rules_dir: Path) -> None:
+        out = python_web()
+        assert "REQUEST-941-APPLICATION-ATTACK-XSS.conf" in out
+        assert "REQUEST-901-INITIALIZATION.conf" in out
+
+    def test_honors_paranoia(self, fake_rules_dir: Path) -> None:
+        out = python_web(paranoia=3)
+        assert "tx.blocking_paranoia_level=3" in out
+
+    def test_honors_exclude_categories(self, fake_rules_dir: Path) -> None:
+        (fake_rules_dir / "rules" / "REQUEST-920-PROTOCOL-ENFORCEMENT.conf").write_text("# proto")
+        out_default = python_web()
+        assert "REQUEST-920-PROTOCOL-ENFORCEMENT.conf" in out_default
+
+        out_excluded = python_web(exclude_categories=("920",))
+        assert "REQUEST-920-PROTOCOL-ENFORCEMENT.conf" not in out_excluded
+
+    def test_extra_appended(self, fake_rules_dir: Path) -> None:
+        out = python_web(extra='SecRule REQUEST_URI "@contains /admin" "id:9999,deny"')
+        assert 'id:9999,deny' in out
 
 
 class TestMissingRulesDir:
