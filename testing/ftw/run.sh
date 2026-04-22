@@ -288,6 +288,7 @@ set +e
   --debug=false \
   --connect-timeout 5s \
   --read-timeout 10s \
+  --cloud \
   --output json \
   > "${OUT_JSON}" 2> "${BUILD_DIR}/ftw-stderr-${FRAMEWORK}.log"
 ftw_exit=$?
