@@ -89,7 +89,18 @@ class ResponseInfo:
 
 @dataclass(slots=True)
 class SkipOptions:
-    """Static-asset bypass knobs shared across every adapter."""
+    """Static-asset bypass knobs shared across every adapter.
+
+    Defaults only cover static assets — endpoint probes and
+    HEAD/OPTIONS are NOT skipped by default because they can carry
+    attacker-controlled headers. Opt in by passing `PROBE_PATHS` and/or
+    `PROBE_METHODS` (constants exported from `pycoraza`) when you know
+    those routes are internal-only:
+
+        from pycoraza import SkipOptions, PROBE_PATHS, PROBE_METHODS
+        skip = SkipOptions(prefixes=SkipOptions.default_prefixes() + PROBE_PATHS,
+                           methods=PROBE_METHODS)
+    """
 
     extensions: tuple[str, ...] = (
         ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico",
@@ -104,12 +115,47 @@ class SkipOptions:
         "/favicon.ico",
     )
     extra_paths: tuple[str, ...] = field(default_factory=tuple)
+    methods: tuple[str, ...] = field(default_factory=tuple)
+
+    @staticmethod
+    def default_prefixes() -> tuple[str, ...]:
+        return (
+            "/static/",
+            "/assets/",
+            "/_next/static/",
+            "/favicon.ico",
+        )
+
+
+# Opt-in preset: common health / readiness / metrics endpoints. Skipping
+# these is a deliberate trade: you lose WAF coverage on paths that are
+# almost always unreachable from the internet but can, if misconfigured,
+# route to handlers with real logic (e.g. Prometheus pushgateway accepts
+# writes at /metrics). Enable only when you have verified the probe
+# routes in your app are static or internal-only.
+PROBE_PATHS: tuple[str, ...] = (
+    "/healthz",
+    "/health",
+    "/metrics",
+    "/readiness",
+    "/readyz",
+    "/liveness",
+    "/livez",
+    "/ping",
+)
+
+# Opt-in preset: request methods that rarely carry attack bodies. OPTIONS
+# CORS preflights can carry attacker-controlled headers; enabling this
+# trades that visibility for the CPU savings.
+PROBE_METHODS: tuple[str, ...] = ("HEAD", "OPTIONS")
 
 
 __all__ = [
     "Interruption",
     "MatchedRule",
     "OnWAFError",
+    "PROBE_METHODS",
+    "PROBE_PATHS",
     "ProcessMode",
     "RequestInfo",
     "ResponseInfo",

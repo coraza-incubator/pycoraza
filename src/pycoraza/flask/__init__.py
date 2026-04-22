@@ -56,7 +56,8 @@ class CorazaMiddleware:
         self, environ: WSGIEnviron, start_response: WSGIStartResponse
     ) -> Iterable[bytes]:
         path = environ.get("PATH_INFO", "")
-        if self._skip(path):
+        method = environ.get("REQUEST_METHOD", "GET")
+        if self._skip(method, path):
             return self._app(environ, start_response)
 
         try:

@@ -121,7 +121,7 @@ class TestSkip:
         assert not any(c[0] == "new_transaction" for c in fake_abi.call_log)
 
     def test_custom_callable(self, fake_abi: FakeLib) -> None:
-        app = _build(fake_abi, skip=lambda path: path == "/")
+        app = _build(fake_abi, skip=lambda _method, path: path == "/")
         with app.test_client() as c:
             rv = c.get("/")
         assert rv.status_code == 200

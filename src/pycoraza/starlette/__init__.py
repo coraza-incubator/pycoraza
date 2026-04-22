@@ -68,7 +68,8 @@ class CorazaMiddleware:
             return
 
         path = scope.get("path", "") or ""
-        if self._skip(path):
+        method = scope.get("method", "GET")
+        if self._skip(method, path):
             await self._app(scope, receive, send)
             return
 
