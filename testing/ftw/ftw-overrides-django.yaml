@@ -1,0 +1,4 @@
+# ftw-overrides-django.yaml — Django-specific overrides.
+# Format: see ../ftw-overrides.yaml.
+# Tags: [django-<area>] — reason must cite what Django does differently.
+overrides: []

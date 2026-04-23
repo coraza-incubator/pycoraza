@@ -1,0 +1,8 @@
+{
+  "adapter": "django",
+  "measured_at": null,
+  "waf_off_rps": null,
+  "waf_on_rps": null,
+  "p99_ms_waf_on": null,
+  "comment": "No baseline pinned yet. Will be populated on first green bench.yml run."
+}

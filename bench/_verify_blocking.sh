@@ -9,11 +9,12 @@ export PYTHONPATH="${ROOT}/src"
 PYTHON="${PYTHON:-python3}"
 GUNICORN="${GUNICORN:-gunicorn}"
 
-for fw in flask fastapi starlette; do
+for fw in flask fastapi starlette django; do
   case "$fw" in
     flask)     PORT=5000; CMD="${GUNICORN} --workers 2 --worker-class sync -b 127.0.0.1:${PORT} --chdir ${ROOT}/examples/flask_app --access-logfile /dev/null --error-logfile /dev/null app:app" ;;
     fastapi)   PORT=5001; CMD="${PYTHON} -m uvicorn --app-dir ${ROOT}/examples/fastapi_app --workers 2 --log-level warning --no-access-log --host 127.0.0.1 --port ${PORT} app:app" ;;
     starlette) PORT=5002; CMD="${PYTHON} -m uvicorn --app-dir ${ROOT}/examples/starlette_app --workers 2 --log-level warning --no-access-log --host 127.0.0.1 --port ${PORT} app:app" ;;
+    django)    PORT=5003; CMD="env DJANGO_SETTINGS_MODULE=django_app.settings PYTHONPATH=${ROOT}/examples/django_app:${ROOT}/examples/shared:${ROOT}/src ${GUNICORN} --workers 2 --worker-class sync -b 127.0.0.1:${PORT} --access-logfile /dev/null --error-logfile /dev/null django_app.wsgi:application" ;;
   esac
 
   export PYCORAZA_PORT="${PORT}"

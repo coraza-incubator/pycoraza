@@ -28,7 +28,8 @@ case "$FW" in
   flask)     PORT=5000; SERVER="${GUNICORN} --workers ${WORKERS} --worker-class sync -b 127.0.0.1:${PORT} --chdir ${ROOT}/examples/flask_app --access-logfile /dev/null --error-logfile - app:app" ;;
   fastapi)   PORT=5001; SERVER="${PYTHON} -m uvicorn --app-dir ${ROOT}/examples/fastapi_app --workers ${WORKERS} --log-level warning --no-access-log --host 127.0.0.1 --port ${PORT} app:app" ;;
   starlette) PORT=5002; SERVER="${PYTHON} -m uvicorn --app-dir ${ROOT}/examples/starlette_app --workers ${WORKERS} --log-level warning --no-access-log --host 127.0.0.1 --port ${PORT} app:app" ;;
-  *) echo "unknown framework $FW" >&2; exit 2 ;;
+  django)    PORT=5003; SERVER="env DJANGO_SETTINGS_MODULE=django_app.settings PYTHONPATH=${ROOT}/examples/django_app:${ROOT}/examples/shared:${ROOT}/src ${GUNICORN} --workers ${WORKERS} --worker-class sync -b 127.0.0.1:${PORT} --access-logfile /dev/null --error-logfile - django_app.wsgi:application" ;;
+  *) echo "unknown framework $FW (flask|fastapi|starlette|django)" >&2; exit 2 ;;
 esac
 
 export LD_LIBRARY_PATH="${ROOT}/build/libcoraza/lib"

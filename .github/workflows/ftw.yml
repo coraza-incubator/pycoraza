@@ -75,6 +75,9 @@ jobs:
             starlette:
               - 'src/pycoraza/starlette/**'
               - 'examples/starlette_app/**'
+            django:
+              - 'src/pycoraza/django/**'
+              - 'examples/django_app/**'
 
       - id: pick
         env:
@@ -83,9 +86,10 @@ jobs:
           FLASK: ${{ steps.filter.outputs.flask }}
           FASTAPI: ${{ steps.filter.outputs.fastapi }}
           STARLETTE: ${{ steps.filter.outputs.starlette }}
+          DJANGO: ${{ steps.filter.outputs.django }}
         run: |
           set -euo pipefail
-          full='["flask","fastapi","starlette"]'
+          full='["flask","fastapi","starlette","django"]'
           if [[ "$EVENT_NAME" == "schedule" || "$EVENT_NAME" == "workflow_dispatch" || "$EVENT_NAME" == "push" ]]; then
             echo "matrix=$full" >> "$GITHUB_OUTPUT"
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -102,6 +106,7 @@ jobs:
           [[ "$FLASK" == "true" ]] && picks+=('"flask"')
           [[ "$FASTAPI" == "true" ]] && picks+=('"fastapi"')
           [[ "$STARLETTE" == "true" ]] && picks+=('"starlette"')
+          [[ "$DJANGO" == "true" ]] && picks+=('"django"')
           if [[ ${#picks[@]} -eq 0 ]]; then
             echo "matrix=[]" >> "$GITHUB_OUTPUT"
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -206,6 +211,7 @@ jobs:
             flask)     echo "port=5000" >> "$GITHUB_OUTPUT" ;;
             fastapi)   echo "port=5001" >> "$GITHUB_OUTPUT" ;;
             starlette) echo "port=5002" >> "$GITHUB_OUTPUT" ;;
+            django)    echo "port=5003" >> "$GITHUB_OUTPUT" ;;
           esac
 
       - name: Run go-ftw against ${{ matrix.adapter }}

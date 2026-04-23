@@ -67,7 +67,8 @@ case "${FRAMEWORK}" in
   flask)     DEFAULT_PORT=5000 ;;
   fastapi)   DEFAULT_PORT=5001 ;;
   starlette) DEFAULT_PORT=5002 ;;
-  *) echo "unknown framework: ${FRAMEWORK} (flask|fastapi|starlette)" >&2; exit 2 ;;
+  django)    DEFAULT_PORT=5003 ;;
+  *) echo "unknown framework: ${FRAMEWORK} (flask|fastapi|starlette|django)" >&2; exit 2 ;;
 esac
 PORT="${PORT:-${DEFAULT_PORT}}"
 
@@ -251,6 +252,16 @@ if [[ "${SKIP_BOOT}" != "1" ]]; then
                 --chdir "${REPO_ROOT}/examples/flask_app"
                 --access-logfile /dev/null --error-logfile -
                 app:app)
+      ;;
+    django)
+      # Django dev server has the same lenient-parser issue as Flask's.
+      # Run under gunicorn pointing at the project's WSGI application.
+      BOOT_CMD=(env "DJANGO_SETTINGS_MODULE=django_app.settings"
+                "PYTHONPATH=${REPO_ROOT}/examples/django_app:${REPO_ROOT}/examples/shared:${REPO_ROOT}/src"
+                python -m gunicorn --workers 2 --worker-class sync
+                -b "127.0.0.1:${PORT}"
+                --access-logfile /dev/null --error-logfile -
+                django_app.wsgi:application)
       ;;
     *)
       BOOT_CMD=(python "${APP_ENTRY}")
