@@ -204,6 +204,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[all,dev]" --config-settings editable_mode=compat
 
+      - name: Fetch OWASP CRS rules
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source native/version.txt
+          TMP=$(mktemp -d)
+          curl -fsSL "https://github.com/coreruleset/coreruleset/archive/refs/tags/${CRS_TAG}.tar.gz" \
+            | tar -C "$TMP" -xzf -
+          SRC="$TMP/coreruleset-${CRS_TAG#v}"
+          DEST=src/pycoraza/coreruleset/rules
+          mkdir -p "$DEST"
+          cp -r "$SRC/rules" "$DEST/rules"
+          cp "$SRC/crs-setup.conf.example" "$DEST/crs-setup.conf.example"
+          echo "${CRS_TAG}" > "$DEST/.crs-tag"
+
       - name: Resolve adapter port
         id: cfg
         run: |

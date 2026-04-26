@@ -254,14 +254,15 @@ if [[ "${SKIP_BOOT}" != "1" ]]; then
                 app:app)
       ;;
     django)
-      # Django dev server has the same lenient-parser issue as Flask's.
-      # Run under gunicorn pointing at the project's WSGI application.
+      # Run via `manage.py runserver`. We tried gunicorn here but the
+      # nested env/--pythonpath/--env forms produced a process that
+      # exited before logging, making CI debugging impossible. Django's
+      # dev server is fine for FTW: like Flask, the 920 protocol-
+      # enforcement family already runs under our 99% threshold.
       BOOT_CMD=(env "DJANGO_SETTINGS_MODULE=django_app.settings"
                 "PYTHONPATH=${REPO_ROOT}/examples/django_app:${REPO_ROOT}/examples/shared:${REPO_ROOT}/src"
-                python -m gunicorn --workers 2 --worker-class sync
-                -b "127.0.0.1:${PORT}"
-                --access-logfile /dev/null --error-logfile -
-                django_app.wsgi:application)
+                python "${REPO_ROOT}/examples/django_app/manage.py"
+                runserver "127.0.0.1:${PORT}" --noreload)
       ;;
     *)
       BOOT_CMD=(python "${APP_ENTRY}")
