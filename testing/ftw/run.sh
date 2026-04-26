@@ -233,7 +233,11 @@ trap cleanup EXIT
 BOOT_TIMEOUT="${BOOT_TIMEOUT:-60}"
 
 if [[ "${SKIP_BOOT}" != "1" ]]; then
-  APP_ENTRY="${REPO_ROOT}/examples/${FRAMEWORK}_app/app.py"
+  if [[ "${FRAMEWORK}" == "django" ]]; then
+    APP_ENTRY="${REPO_ROOT}/examples/django_app/manage.py"
+  else
+    APP_ENTRY="${REPO_ROOT}/examples/${FRAMEWORK}_app/app.py"
+  fi
   if [[ ! -f "${APP_ENTRY}" ]]; then
     echo "missing example app: ${APP_ENTRY}" >&2
     exit 1
