@@ -58,6 +58,27 @@ class TestRequestInfo:
         info = _request_info_from_django(request)
         assert all(isinstance(v, str) for _, v in info.headers)
 
+    def test_get_with_no_body_strips_synthetic_content_type(self, fake_abi: FakeLib) -> None:
+        """Django's wsgiref dev server synthesizes CONTENT_TYPE='text/plain'
+        on bodyless GETs. Forwarding that to Coraza causes CRS 920420 to
+        fire on every health probe at paranoia >= 2. Verify we strip
+        Content-Type / Content-Length when no body is present.
+        """
+        request = RequestFactory().get("/healthz")
+        request.META["CONTENT_TYPE"] = "text/plain"  # what runserver injects
+        request.META["CONTENT_LENGTH"] = ""
+        info = _request_info_from_django(request)
+        names = {n for n, _ in info.headers}
+        assert "content-type" not in names
+        assert "content-length" not in names
+
+    def test_post_with_body_keeps_content_type(self, fake_abi: FakeLib) -> None:
+        request = RequestFactory().post("/echo", data={"k": "v"})
+        info = _request_info_from_django(request)
+        names = {n for n, _ in info.headers}
+        assert "content-type" in names
+        assert "content-length" in names
+
 
 class TestSafeInt:
     def test_none(self) -> None:

@@ -258,15 +258,17 @@ if [[ "${SKIP_BOOT}" != "1" ]]; then
                 app:app)
       ;;
     django)
-      # Run via `manage.py runserver`. We tried gunicorn here but the
-      # nested env/--pythonpath/--env forms produced a process that
-      # exited before logging, making CI debugging impossible. Django's
-      # dev server is fine for FTW: like Flask, the 920 protocol-
-      # enforcement family already runs under our 99% threshold.
+      # Run via gunicorn — Django's runserver is too lenient on
+      # malformed HTTP and returns HTML error pages, which crashes
+      # go-ftw's response parser ('malformed HTTP status code "HTML"').
+      # Pass DJANGO_SETTINGS_MODULE + PYTHONPATH inline via env so
+      # gunicorn's own --pythonpath / --env aren't needed.
       BOOT_CMD=(env "DJANGO_SETTINGS_MODULE=django_app.settings"
                 "PYTHONPATH=${REPO_ROOT}/examples/django_app:${REPO_ROOT}/examples/shared:${REPO_ROOT}/src"
-                python "${REPO_ROOT}/examples/django_app/manage.py"
-                runserver "127.0.0.1:${PORT}" --noreload)
+                python -m gunicorn --workers 2 --worker-class sync
+                -b "127.0.0.1:${PORT}"
+                --access-logfile /dev/null --error-logfile -
+                django_app.wsgi:application)
       ;;
     *)
       BOOT_CMD=(python "${APP_ENTRY}")
@@ -289,10 +291,17 @@ if [[ "${SKIP_BOOT}" != "1" ]]; then
   # Health-probe loop. We poll /healthz and accept any 2xx/3xx response;
   # the probe's only job is to confirm the server is accepting and
   # answering HTTP. Per-test assertions are go-ftw's job afterwards.
+  #
+  # We send full browser-shape headers because the example apps run at
+  # paranoia=2 in FTW mode; bare curl gets blocked by CRS 920300
+  # (missing Accept) / 913 (scanner UA).
   retries="${BOOT_TIMEOUT}"
   status="000"
   while [[ "${retries}" -gt 0 ]]; do
-    status="$(curl -sS -o /dev/null --connect-timeout 2 -w '%{http_code}' "http://127.0.0.1:${PORT}/healthz" 2>/dev/null || true)"
+    status="$(curl -sS -o /dev/null --connect-timeout 2 -w '%{http_code}' \
+      -H 'User-Agent: Mozilla/5.0 ftw-probe' \
+      -H 'Accept: text/html,application/json,*/*;q=0.8' \
+      "http://127.0.0.1:${PORT}/healthz" 2>/dev/null || true)"
     if [[ "${status}" =~ ^[23][0-9][0-9]$ ]]; then
       break
     fi

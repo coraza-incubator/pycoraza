@@ -141,13 +141,26 @@ def _read_body(request: HttpRequest) -> bytes | None:
 
 
 def _request_info_from_django(request: HttpRequest) -> RequestInfo:
+    # Django's wsgiref dev server (and any wsgiref-based server) synthesizes
+    # CONTENT_TYPE='text/plain' on bodyless GETs because email.Message's
+    # default content type is text/plain. Forwarding that to Coraza causes
+    # CRS 920420 ("Request content type not allowed by policy") to fire on
+    # every health probe at paranoia>=2. Strip CONTENT_TYPE / CONTENT_LENGTH
+    # when there's no body — they are not meaningful per PEP 3333 unless a
+    # body exists.
+    raw_len = request.META.get("CONTENT_LENGTH") or ""
+    try:
+        has_body = int(raw_len) > 0
+    except (TypeError, ValueError):
+        has_body = False
+
     headers: list[tuple[str, str]] = []
     for key, value in request.META.items():
         if not isinstance(value, str):
             continue
         if key.startswith("HTTP_"):
             headers.append((key[5:].replace("_", "-").lower(), value))
-        elif key in ("CONTENT_TYPE", "CONTENT_LENGTH") and value:
+        elif key in ("CONTENT_TYPE", "CONTENT_LENGTH") and value and has_body:
             headers.append((key.replace("_", "-").lower(), value))
 
     remote_addr = request.META.get("REMOTE_ADDR", "") or ""
