@@ -141,14 +141,18 @@ def _read_body(request: HttpRequest) -> bytes | None:
 
 
 def _request_info_from_django(request: HttpRequest) -> RequestInfo:
-    # Django's wsgiref dev server (and any wsgiref-based server) synthesizes
-    # CONTENT_TYPE='text/plain' on bodyless GETs because email.Message's
-    # default content type is text/plain. Forwarding that to Coraza causes
-    # CRS 920420 ("Request content type not allowed by policy") to fire on
-    # every health probe at paranoia>=2. Strip CONTENT_TYPE / CONTENT_LENGTH
-    # when there's no body — they are not meaningful per PEP 3333 unless a
-    # body exists.
-    raw_len = request.META.get("CONTENT_LENGTH") or ""
+    # wsgiref synthesizes CONTENT_TYPE='text/plain' on bodyless GETs
+    # because email.Message's default content type is text/plain. That
+    # synthetic value, forwarded to Coraza, fires CRS 920420 at
+    # paranoia>=2 and 403s every health probe.
+    #
+    # Conservative narrow strip: only drop CONTENT_TYPE if it's the
+    # *exact* wsgiref default ("text/plain") AND the request carries
+    # no body. Any other CT value — including wire-supplied "text/plain"
+    # — is forwarded so CRS rules can evaluate. CONTENT_LENGTH gets
+    # the same treatment when blank/zero (wsgiref leaves an empty
+    # string, real clients send a number).
+    raw_len = (request.META.get("CONTENT_LENGTH") or "").strip()
     try:
         has_body = int(raw_len) > 0
     except (TypeError, ValueError):
@@ -160,8 +164,12 @@ def _request_info_from_django(request: HttpRequest) -> RequestInfo:
             continue
         if key.startswith("HTTP_"):
             headers.append((key[5:].replace("_", "-").lower(), value))
-        elif key in ("CONTENT_TYPE", "CONTENT_LENGTH") and value and has_body:
-            headers.append((key.replace("_", "-").lower(), value))
+        elif key == "CONTENT_TYPE" and value:
+            if not has_body and value == "text/plain":
+                continue  # wsgiref synthetic default — drop
+            headers.append(("content-type", value))
+        elif key == "CONTENT_LENGTH" and value and has_body:
+            headers.append(("content-length", value))
 
     remote_addr = request.META.get("REMOTE_ADDR", "") or ""
     remote_port = _safe_int(request.META.get("REMOTE_PORT"))

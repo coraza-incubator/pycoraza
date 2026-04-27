@@ -58,14 +58,15 @@ class TestRequestInfo:
         info = _request_info_from_django(request)
         assert all(isinstance(v, str) for _, v in info.headers)
 
-    def test_get_with_no_body_strips_synthetic_content_type(self, fake_abi: FakeLib) -> None:
-        """Django's wsgiref dev server synthesizes CONTENT_TYPE='text/plain'
-        on bodyless GETs. Forwarding that to Coraza causes CRS 920420 to
-        fire on every health probe at paranoia >= 2. Verify we strip
-        Content-Type / Content-Length when no body is present.
+    def test_strips_only_exact_wsgiref_default_on_bodyless(
+        self, fake_abi: FakeLib
+    ) -> None:
+        """wsgiref's synthetic CONTENT_TYPE on bodyless requests is exactly
+        'text/plain' (email.Message default). Strip ONLY that exact value
+        so CRS 920420 doesn't false-positive on health probes.
         """
         request = RequestFactory().get("/healthz")
-        request.META["CONTENT_TYPE"] = "text/plain"  # what runserver injects
+        request.META["CONTENT_TYPE"] = "text/plain"
         request.META["CONTENT_LENGTH"] = ""
         info = _request_info_from_django(request)
         names = {n for n, _ in info.headers}
@@ -76,6 +77,38 @@ class TestRequestInfo:
         request = RequestFactory().post("/echo", data={"k": "v"})
         info = _request_info_from_django(request)
         names = {n for n, _ in info.headers}
+        assert "content-type" in names
+        assert "content-length" in names
+
+    def test_non_default_content_type_on_bodyless_preserved(
+        self, fake_abi: FakeLib
+    ) -> None:
+        """Security: any Content-Type value other than wsgiref's exact
+        'text/plain' default is forwarded even on bodyless requests, so
+        Coraza/CRS can evaluate it. This prevents an attacker from
+        encoding an attack in the Content-Type header on a bodyless
+        request and bypassing all CT-keyed rules.
+        """
+        for malicious in (
+            "application/x-malicious",
+            "text/html",
+            "text/plain; charset=evil",
+            "<script>alert(1)</script>",
+            "TEXT/PLAIN",  # case differs -> not the exact default
+        ):
+            request = RequestFactory().get("/x")
+            request.META["CONTENT_TYPE"] = malicious
+            request.META["CONTENT_LENGTH"] = ""
+            info = _request_info_from_django(request)
+            assert ("content-type", malicious) in info.headers, (
+                f"non-default CT {malicious!r} on bodyless request must be forwarded"
+            )
+
+    def test_content_length_with_body_preserved(self, fake_abi: FakeLib) -> None:
+        request = RequestFactory().post("/x", data="payload", content_type="text/plain")
+        info = _request_info_from_django(request)
+        names = {n for n, _ in info.headers}
+        # text/plain + body present -> CT preserved
         assert "content-type" in names
         assert "content-length" in names
 
