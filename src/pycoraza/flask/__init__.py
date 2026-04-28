@@ -212,6 +212,32 @@ def _request_info_from_environ(environ: WSGIEnviron, path: str) -> RequestInfo:
 
 
 def _iter_wsgi_headers(environ: WSGIEnviron) -> Iterable[tuple[str, str]]:
+    """Yield request headers as `(name, value)` tuples for the WAF.
+
+    Uses Werkzeug's ``EnvironHeaders`` when available — it iterates the
+    canonical WSGI header set (``HTTP_*`` plus ``CONTENT_TYPE`` /
+    ``CONTENT_LENGTH``) with proper title-cased names. We fall back to
+    a manual loop if Werkzeug isn't installed (pure-WSGI deployments).
+
+    Note on multi-value headers: PEP 3333 collapses repeated request
+    headers into a single comma-joined env var, so by the time the WAF
+    sees them they are already merged. This is a WSGI-spec limitation,
+    not something we can recover from on the request side. The shape
+    remains ``Iterable[tuple[str, str]]`` so duplicate entries are
+    forwarded as distinct tuples whenever the underlying source does
+    preserve them — and the response side (a list of tuples emitted by
+    ``start_response``) does, e.g. for multiple ``Set-Cookie`` headers.
+    """
+    try:
+        from werkzeug.datastructures import EnvironHeaders
+    except ImportError:
+        yield from _iter_wsgi_headers_fallback(environ)
+        return
+    for name, value in EnvironHeaders(environ):
+        yield name.lower(), value
+
+
+def _iter_wsgi_headers_fallback(environ: WSGIEnviron) -> Iterable[tuple[str, str]]:
     for key, value in environ.items():
         if not isinstance(value, str):
             continue

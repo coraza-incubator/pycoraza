@@ -247,6 +247,10 @@ def _replay_receive(original: Receive, body: bytes) -> Receive:
 
 
 def _request_info_from_scope(scope: Scope) -> RequestInfo:
+    # ASGI ``scope["headers"]`` is a list of ``(bytes, bytes)`` tuples.
+    # Repeated request headers (e.g. two ``Cookie`` lines or proxy-split
+    # ``X-Forwarded-For``) appear as distinct entries — preserve that
+    # by iterating the list rather than collapsing into a dict.
     headers = tuple(
         (k.decode("latin-1").lower(), v.decode("latin-1"))
         for k, v in scope.get("headers", [])
@@ -337,6 +341,10 @@ class _WrappedSend:
             return
         if message["type"] == "http.response.start":
             status = int(message.get("status", 200))
+            # ``message["headers"]`` is a list of ``(bytes, bytes)`` —
+            # repeated entries (e.g. multiple ``Set-Cookie`` headers,
+            # which RFC 6265 explicitly mandates as separate lines)
+            # round-trip as distinct tuples without de-duplication.
             headers = [
                 (k.decode("latin-1"), v.decode("latin-1"))
                 for k, v in message.get("headers", [])
