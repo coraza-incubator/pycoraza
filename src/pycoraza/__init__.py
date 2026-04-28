@@ -28,6 +28,8 @@ from .transaction import Transaction
 from .types import (
     PROBE_METHODS,
     PROBE_PATHS,
+    BodyLimits,
+    BodyOverflowAction,
     Interruption,
     MatchedRule,
     OnWAFError,
@@ -52,6 +54,8 @@ __all__ = [
     "PROBE_PATHS",
     "WAF",
     "Abi",
+    "BodyLimits",
+    "BodyOverflowAction",
     "CorazaError",
     "Interruption",
     "Logger",

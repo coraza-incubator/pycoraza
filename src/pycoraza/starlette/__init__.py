@@ -19,14 +19,26 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import IO, TYPE_CHECKING, Any
 
+from .._body import (
+    BufferedBody,
+    iter_replay,
+    resolve_limits,
+)
 from ..abi import CorazaError
 from ..client_ip import ClientIPArg, ClientIPExtractor, resolve_extractor
 from ..skip import SkipArg, build_skip_predicate, normalize_path_for_skip
-from ..types import Interruption, OnWAFError, OnWAFErrorArg, ProcessMode, RequestInfo
+from ..types import (
+    BodyLimits,
+    Interruption,
+    OnWAFError,
+    OnWAFErrorArg,
+    ProcessMode,
+    RequestInfo,
+)
 
 if TYPE_CHECKING:
     from ..transaction import Transaction
@@ -47,6 +59,7 @@ class _RequestResult:
     interrupted: bool
     interruption: Interruption | None
     matched_rules: list
+    buffered: BufferedBody
 
 
 class CorazaMiddleware:
@@ -78,6 +91,7 @@ class CorazaMiddleware:
         skip: SkipArg = None,
         thread_limit: int | None = None,
         extract_client_ip: ClientIPArg = None,
+        body_limits: BodyLimits | None = None,
     ) -> None:
         self._app = app
         self._waf = waf
@@ -90,6 +104,7 @@ class CorazaMiddleware:
             thread_limit = max(64, (os.cpu_count() or 4) * 8)
         self._thread_limit = thread_limit
         self._semaphore = asyncio.Semaphore(thread_limit)
+        self._body_limits = resolve_limits(body_limits)
 
     async def _run_in_thread(self, fn, /, *args):
         async with self._semaphore:
@@ -110,28 +125,79 @@ class CorazaMiddleware:
             await self._app(scope, receive, send)
             return
 
-        body = await _read_asgi_body(receive)
         request_info = _request_info_from_scope(scope, self._extract_client_ip)
+
+        # Step 1: spool the body off the async receive channel before
+        # touching the WAF. Doing this first means the WAF phase-1+2
+        # call only sees a sync iterator pulling from a bounded buffer
+        # — no event-loop bouncing per chunk, no full-body memory
+        # spike, and the spool fd is reusable for the downstream replay.
+        spool_stream, total_read = await _spool_async_body(receive, self._body_limits)
+
         try:
             result = await self._run_in_thread(
-                _evaluate_request,
+                _evaluate_request_streaming,
                 self._waf,
                 request_info,
-                body,
+                spool_stream,
+                total_read,
+                self._body_limits,
             )
         except CorazaError as exc:
-            await self._handle_waf_error(scope, receive, send, exc, request_info, body)
+            await self._handle_waf_error(
+                scope, receive, send, exc, request_info, spool_stream
+            )
             return
 
         tx = result.tx
+        buffered = result.buffered
+
+        # 413 path: the body is past max_total under the default
+        # ``block`` policy. Refuse before the downstream app runs.
+        if buffered.exceeded_total and self._body_limits.on_overflow == "block":
+            self._waf.logger.warning(
+                "body limit exceeded — blocking",
+                bytes=buffered.total_bytes,
+                limit=self._body_limits.max_total,
+                policy="block",
+            )
+            await _send_413(send)
+            buffered.close()
+            await self._finalize(tx)
+            return
+
         if result.interrupted and result.interruption is not None and self._waf.mode is ProcessMode.BLOCK:
             _log_block(self._waf.logger, result.interruption, result.matched_rules)
             if not await _call_on_block_async(self._on_block, result.interruption, scope, send):
                 await _default_block_response(result.interruption, send)
+            buffered.close()
             await self._finalize(tx)
             return
 
-        replay_receive = _replay_receive(receive, body)
+        if buffered.exceeded_total and self._body_limits.on_overflow == "skip":
+            self._waf.logger.warning(
+                "body limit exceeded — bypassing WAF",
+                bytes=buffered.total_bytes,
+                limit=self._body_limits.max_total,
+                policy="skip",
+            )
+            replay_receive = _replay_receive_from_stream(receive, buffered.replay)
+            try:
+                await self._app(scope, replay_receive, send)
+            finally:
+                buffered.close()
+                await self._finalize(tx)
+            return
+
+        if buffered.waf_truncated:
+            self._waf.logger.warning(
+                "body limit exceeded — partial WAF inspection",
+                bytes=buffered.total_bytes,
+                limit=self._body_limits.max_total,
+                policy="evaluate_partial",
+            )
+
+        replay_receive = _replay_receive_from_stream(receive, buffered.replay)
         wrapped_send = _wrap_send(
             send,
             tx,
@@ -143,6 +209,7 @@ class CorazaMiddleware:
         try:
             await self._app(scope, replay_receive, wrapped_send.send)
         finally:
+            buffered.close()
             await self._finalize(tx)
 
     async def _finalize(self, tx: Transaction) -> None:
@@ -158,18 +225,28 @@ class CorazaMiddleware:
         send: Send,
         exc: Exception,
         request_info: RequestInfo,
-        body: bytes,
+        spool_stream: IO[bytes],
     ) -> None:
         decision = _resolve_waf_error_decision(self._on_waf_error, exc, request_info)
         if decision is OnWAFError.ALLOW:
-            # Receive has already been drained into ``body``. Replay
-            # the buffered body to the downstream app so allow-on-error
-            # is actually honored end-to-end. Bounded by whatever body
-            # limit the upstream server enforced; we never read more
-            # than the client sent.
-            replay = _replay_receive(receive, body)
-            await self._app(scope, replay, send)
+            # Receive has already been drained into ``spool_stream``.
+            # Replay the buffered body to the downstream app so
+            # allow-on-error is actually honored end-to-end. Bounded
+            # by whatever body limit the upstream server enforced; we
+            # never read more than the client sent.
+            replay = _replay_receive_from_stream(receive, spool_stream)
+            try:
+                await self._app(scope, replay, send)
+            finally:
+                try:
+                    spool_stream.close()
+                except Exception:
+                    pass
             return
+        try:
+            spool_stream.close()
+        except Exception:
+            pass
         await send({
             "type": "http.response.start",
             "status": 500,
@@ -216,8 +293,12 @@ def _resolve_waf_error_decision(
     return OnWAFError.BLOCK
 
 
-def _evaluate_request(
-    waf: WAF, request: RequestInfo, body: bytes
+def _evaluate_request_streaming(
+    waf: WAF,
+    request: RequestInfo,
+    spool_stream: IO[bytes],
+    total_read: int,
+    limits: BodyLimits,
 ) -> _RequestResult:
     """Run the full phase-1+2 pipeline on a worker thread.
 
@@ -226,24 +307,117 @@ def _evaluate_request(
     On a 50-conn wrk bench this cuts scheduler overhead ~3x vs the
     original "one to_thread per phase" implementation.
 
+    Body bytes come from ``spool_stream`` (already drained off the
+    async ``receive`` channel) so the WAF inspects exactly what
+    arrived on the wire, in chunked order. ``total_read`` lets us
+    short-circuit the spool walker when the body is empty without
+    paying the iter_replay rewind cost.
+
     The matched-rule list is also snapshot here, on the same worker
-    thread that drove the cgo callbacks — that way the caller has
-    a complete picture without bouncing back into the WAF.
+    thread that drove the cgo callbacks — so the caller has a
+    complete picture without bouncing back into the WAF.
     """
     tx = waf.new_transaction()
     try:
-        interrupted = tx.process_request_bundle(request, body)
-        intr = tx.interruption() if interrupted else None
-        matches = tx.matched_rules() if interrupted else []
-        return _RequestResult(
-            tx=tx, interrupted=interrupted, interruption=intr, matched_rules=matches
+        tx.process_connection(
+            request.remote_addr or "",
+            request.remote_port or 0,
+            "",
+            request.server_port or 0,
         )
+        tx.add_request_headers(request.headers)
+        tx.process_uri(request.url, request.method, request.protocol)
+        if tx.process_request_headers():
+            return _wrap_result(
+                tx,
+                interrupted=True,
+                buffered=BufferedBody(
+                    replay=spool_stream,
+                    total_bytes=total_read,
+                    exceeded_total=False,
+                    waf_truncated=False,
+                ),
+            )
+
+        # Spool was filled with the FULL body so ``skip`` and
+        # ``evaluate_partial`` can replay all bytes downstream. The
+        # WAF feed cap is enforced here: we only call
+        # ``append_request_body`` for the first ``max_total`` bytes.
+        exceeded = total_read > limits.max_total
+        if total_read == 0:
+            buffered = BufferedBody(
+                replay=spool_stream,
+                total_bytes=0,
+                exceeded_total=False,
+                waf_truncated=False,
+            )
+        else:
+            # Skip the WAF feed entirely on the ``skip`` overflow path
+            # — we're going to forward the body downstream untouched
+            # and the operator opted into the coverage gap. This keeps
+            # the cgo callbacks' rule chain off the audit log too.
+            skip_waf = exceeded and limits.on_overflow == "skip"
+            if not skip_waf:
+                try:
+                    spool_stream.seek(0)
+                except (AttributeError, OSError):
+                    pass
+                fed = 0
+                while fed < limits.max_total:
+                    want = min(64 * 1024, limits.max_total - fed)
+                    chunk = spool_stream.read(want)
+                    if not chunk:
+                        break
+                    tx.append_request_body(chunk)
+                    fed += len(chunk)
+            buffered = BufferedBody(
+                replay=spool_stream,
+                total_bytes=total_read,
+                exceeded_total=exceeded,
+                waf_truncated=exceeded and not skip_waf,
+            )
+
+        # Three exit paths from phase 2:
+        #   * normal body — run process_request_body
+        #   * exceeded + block — caller is going to 413, no need to
+        #     process (we already ate the bytes on the way in)
+        #   * exceeded + skip — bypass WAF entirely, no process call
+        # Only ``evaluate_partial`` still runs phase 2 on the truncated
+        # prefix — that's the documented attack-detection gap.
+        run_phase2 = (
+            not buffered.exceeded_total
+            or limits.on_overflow == "evaluate_partial"
+        )
+        if run_phase2:
+            tx.process_request_body()
+        return _wrap_result(tx, interrupted=False, buffered=buffered)
     except CorazaError:
         try:
             tx.close()
         except CorazaError:
             pass
         raise
+
+
+def _wrap_result(
+    tx: Transaction, *, interrupted: bool, buffered: BufferedBody
+) -> _RequestResult:
+    """Snapshot the interruption state on the worker thread.
+
+    Pulled out of the body of ``_evaluate_request_streaming`` so the
+    request-headers early-return and the body early-return share one
+    construction site — easier to keep `matched_rules` capture honest.
+    """
+    interrupted = interrupted or tx.interruption() is not None
+    intr = tx.interruption() if interrupted else None
+    matches = tx.matched_rules() if interrupted else []
+    return _RequestResult(
+        tx=tx,
+        interrupted=interrupted,
+        interruption=intr,
+        matched_rules=matches,
+        buffered=buffered,
+    )
 
 
 def _finalize_tx(tx: Transaction) -> None:
@@ -253,32 +427,101 @@ def _finalize_tx(tx: Transaction) -> None:
         tx.close()
 
 
-async def _read_asgi_body(receive: Receive) -> bytes:
-    chunks: list[bytes] = []
+async def _spool_async_body(
+    receive: Receive, limits: BodyLimits
+) -> tuple[IO[bytes], int]:
+    """Drain the ASGI receive channel into a spooled tempfile.
+
+    The spool gets EVERY byte the client sends, regardless of
+    ``limits.max_total``: the ``skip`` policy forwards the full body
+    to the downstream app, which can only happen if we kept it. The
+    WAF feed cap is enforced in the worker thread, not here.
+
+    We do honor the spool's RAM-vs-disk threshold (``max_in_memory``)
+    so the per-process footprint stays bounded under sustained load,
+    and we obviously stop on ``http.disconnect`` — at that point
+    there's nothing to forward and ``BodyLimits`` is irrelevant.
+    """
+    import tempfile
+
+    # Spool fd outlives this function: the eval thread reads back from
+    # it, the replay receive iterates it, and the close happens in the
+    # request finalizer. A context manager here would close it before
+    # the WAF ever sees the bytes.
+    spool: tempfile.SpooledTemporaryFile[bytes] = tempfile.SpooledTemporaryFile(  # noqa: SIM115
+        max_size=limits.max_in_memory, mode="w+b"
+    )
+    total = 0
     while True:
         message = await receive()
         if message["type"] == "http.request":
             chunk = message.get("body", b"") or b""
             if chunk:
-                chunks.append(chunk)
+                spool.write(chunk)
+                total += len(chunk)
             if not message.get("more_body", False):
                 break
         elif message["type"] == "http.disconnect":
             break
-    return b"".join(chunks)
+    spool.seek(0)
+    return spool, total
 
 
-def _replay_receive(original: Receive, body: bytes) -> Receive:
-    delivered = False
+def _replay_receive_from_stream(original: Receive, stream: IO[bytes]) -> Receive:
+    """Replay a spooled body through ``receive`` in 64KiB chunks.
+
+    ASGI consumers (Starlette, FastAPI, Mangum) iterate ``receive``
+    until ``more_body=False``, then ignore further calls. We emit
+    ``more_body=True`` chunks while bytes remain and a final
+    ``more_body=False`` chunk to terminate. Streaming chunks (vs. one
+    big buffer) keeps the downstream framework from briefly doubling
+    a big body in memory — the whole point of the spool.
+    """
+    try:
+        stream.seek(0)
+    except (AttributeError, OSError):
+        pass
+    iterator: Iterator[bytes] | None = None
+    pending: bytes | None = None
+    finished = False
+
+    def _start() -> Iterator[bytes]:
+        return iter_replay(stream, chunk_size=64 * 1024)
 
     async def receive() -> Message:
-        nonlocal delivered
-        if not delivered:
-            delivered = True
-            return {"type": "http.request", "body": body, "more_body": False}
-        return await original()
+        nonlocal iterator, pending, finished
+        if finished:
+            return await original()
+        if iterator is None:
+            iterator = _start()
+            pending = next(iterator, None)
+        # Look one chunk ahead so we can set ``more_body`` correctly
+        # without an extra empty-trailer message.
+        current = pending
+        nxt = next(iterator, None) if iterator is not None else None
+        pending = nxt
+        if current is None:
+            finished = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        if nxt is None:
+            finished = True
+            return {"type": "http.request", "body": current, "more_body": False}
+        return {"type": "http.request", "body": current, "more_body": True}
 
     return receive
+
+
+async def _send_413(send: Send) -> None:
+    payload = b"Payload Too Large"
+    await send({
+        "type": "http.response.start",
+        "status": 413,
+        "headers": [
+            (b"content-type", b"text/plain; charset=utf-8"),
+            (b"content-length", str(len(payload)).encode()),
+        ],
+    })
+    await send({"type": "http.response.body", "body": payload})
 
 
 def _request_info_from_scope(
