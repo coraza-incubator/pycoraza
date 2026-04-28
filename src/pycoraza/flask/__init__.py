@@ -32,11 +32,11 @@ from ..types import (
     OnWAFErrorArg,
     ProcessMode,
     RequestInfo,
+    WAFLike,
 )
 
 if TYPE_CHECKING:
     from ..transaction import Transaction
-    from ..waf import WAF
 
 WSGIEnviron = dict[str, Any]
 WSGIStartResponse = Callable[..., Callable[[bytes], Any]]
@@ -52,7 +52,7 @@ class CorazaMiddleware:
         self,
         app: WSGIApp,
         *,
-        waf: WAF,
+        waf: WAFLike,
         on_block: OnBlock | None = None,
         inspect_response: bool = False,
         on_waf_error: OnWAFErrorArg = OnWAFError.BLOCK,

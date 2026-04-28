@@ -25,12 +25,11 @@ from .._body import (
 )
 from ..abi import CorazaError
 from ..skip import build_skip_predicate, normalize_path_for_skip
-from ..types import Interruption, OnWAFError, ProcessMode, RequestInfo
-from ..waf import WAF
+from ..types import Interruption, OnWAFError, ProcessMode, RequestInfo, WAFLike
 
 try:
     from django.conf import settings
-    from django.core.exceptions import ImproperlyConfigured, MiddlewareNotUsed
+    from django.core.exceptions import MiddlewareNotUsed
     from django.http import HttpRequest, HttpResponse, JsonResponse
 except ImportError as exc:  # pragma: no cover - import guard
     raise ImportError(
@@ -84,16 +83,12 @@ class CorazaMiddleware:
     async_capable = False
 
     def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]) -> None:
-        waf = getattr(settings, "PYCORAZA_WAF", None)
+        waf: WAFLike | None = getattr(settings, "PYCORAZA_WAF", None)
         if waf is None:
             raise MiddlewareNotUsed(
                 "pycoraza.django.CorazaMiddleware: settings.PYCORAZA_WAF is not set; "
-                "set it to a WAF instance created via pycoraza.create_waf()."
-            )
-        if not isinstance(waf, WAF):
-            raise ImproperlyConfigured(
-                "settings.PYCORAZA_WAF must be a pycoraza.WAF instance; "
-                f"got {type(waf).__name__}"
+                "set it to a WAF instance created via pycoraza.create_waf() "
+                "(or a WAFRef wrapping one)."
             )
 
         self._get_response = get_response

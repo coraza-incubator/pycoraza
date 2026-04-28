@@ -1,0 +1,1 @@
+Removed `WAFPool` and `create_waf_pool` outright. The class was always a thin wrapper around a single `WAF` — never a real multi-process pool — and the name was misleading. Use `WAFRef` (or pass a `WAF` directly; adapter signatures accept `WAFLike = WAF | WAFRef`). See `docs/scaling.md` for multi-worker recipes.

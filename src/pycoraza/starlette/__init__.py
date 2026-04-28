@@ -38,11 +38,11 @@ from ..types import (
     OnWAFErrorArg,
     ProcessMode,
     RequestInfo,
+    WAFLike,
 )
 
 if TYPE_CHECKING:
     from ..transaction import Transaction
-    from ..waf import WAF
 
 Scope = dict[str, Any]
 Message = dict[str, Any]
@@ -84,7 +84,7 @@ class CorazaMiddleware:
         self,
         app: ASGIApp,
         *,
-        waf: WAF,
+        waf: WAFLike,
         on_block: OnBlockAsync | None = None,
         inspect_response: bool = False,
         on_waf_error: OnWAFErrorArg = OnWAFError.BLOCK,
@@ -294,7 +294,7 @@ def _resolve_waf_error_decision(
 
 
 def _evaluate_request_streaming(
-    waf: WAF,
+    waf: WAFLike,
     request: RequestInfo,
     spool_stream: IO[bytes],
     total_read: int,

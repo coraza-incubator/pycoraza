@@ -10,7 +10,7 @@ from _fake_abi import FakeLib
 django = pytest.importorskip("django")
 
 from django.conf import settings
-from django.core.exceptions import ImproperlyConfigured, MiddlewareNotUsed
+from django.core.exceptions import MiddlewareNotUsed
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.test import RequestFactory
 
@@ -21,7 +21,9 @@ from pycoraza import (
     ProcessMode,
     SkipOptions,
     WAFConfig,
+    WAFRef,
     create_waf,
+    create_waf_ref,
 )
 from pycoraza.django import CorazaMiddleware
 
@@ -57,15 +59,18 @@ class TestConstruction:
         with pytest.raises(MiddlewareNotUsed):
             CorazaMiddleware(_plain_response)
 
-    def test_wrong_type_raises_improperly_configured(self, fake_abi: FakeLib) -> None:
-        settings.PYCORAZA_WAF = "not a waf"  # type: ignore[assignment]
-        with pytest.raises(ImproperlyConfigured):
-            CorazaMiddleware(_plain_response)
-
     def test_happy_construction(self, fake_abi: FakeLib) -> None:
         settings.PYCORAZA_WAF = _mk_waf()
         mw = CorazaMiddleware(_plain_response)
         assert mw is not None
+
+    def test_accepts_wafref(self, fake_abi: FakeLib) -> None:
+        # The middleware no longer rejects a non-`WAF` instance — anything
+        # that quacks `new_transaction()` (e.g. a `WAFRef`) is fine.
+        settings.PYCORAZA_WAF = create_waf_ref(WAFConfig(rules="SecRuleEngine On\n"))
+        mw = CorazaMiddleware(_plain_response)
+        rv = mw(RequestFactory().get("/"))
+        assert rv.status_code == 200
 
 
 class TestHappyPath:

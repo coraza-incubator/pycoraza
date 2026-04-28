@@ -9,12 +9,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Union
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from .logger import Logger
+    from .pool import WAFRef
+    from .waf import WAF
 
 
 class ProcessMode(str, Enum):
@@ -86,6 +88,16 @@ class ResponseInfo:
     status: int
     headers: Iterable[tuple[str, str]]
     protocol: str = "HTTP/1.1"
+
+
+# Adapter-facing union: anything an adapter can call `.new_transaction()`
+# on without caring whether the underlying object is a bare `WAF` or a
+# thin reference wrapper (`WAFRef`). Both expose the same surface
+# (`new_transaction`, `mode`, `logger`, `close`); `WAFRef` just defers
+# to its inner WAF. Spelled with `Union[..., str-quoted forward refs]`
+# so this module does not import `waf` / `pool` at runtime — those
+# modules import from here.
+WAFLike = Union["WAF", "WAFRef"]
 
 
 # Callable form of `on_waf_error`. Adapters invoke this only for WAF
@@ -234,4 +246,5 @@ __all__ = [
     "SkipOptions",
     "WAFConfig",
     "WAFErrorPolicy",
+    "WAFLike",
 ]

@@ -1,46 +1,54 @@
-"""WAFPool: one WAF reference shared across threads in a process.
+"""WAFRef: a thin reference wrapper around a single WAF.
 
-Rationale: libcoraza's Go runtime handles scheduling, so a single WAF
-is thread-safe. The `Pool` abstraction exists for API parity with
-coraza-node, letting callers `new_transaction()` without caring how
-many WAFs back the pool — useful for single-process, multi-thread
-deployments like FastAPI + uvicorn workers.
+`WAFRef` adapts a single `WAF` to the same `new_transaction()` shape
+adapters expect; it is **NOT** a multi-process pool — see
+`docs/scaling.md` for gunicorn / uvicorn worker patterns.
 
-For multi-process scaling, have each worker create its own WAF.
-Sharing a WAF handle across forked processes is NOT supported: Go's
+Frameworks (Flask, Starlette, FastAPI, Django) call
+`waf.new_transaction()` against an opaque "WAF-like" handle. Some
+consumers prefer to construct a WAF reference at module level via a
+single config-shaped factory; `WAFRef` is that factory's output. For
+multi-process scaling, have each worker create its own WAF — Go's
 runtime state does not survive `fork()`.
 """
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from .transaction import Transaction
 from .types import ProcessMode, WAFConfig
 from .waf import WAF, create_waf
 
+if TYPE_CHECKING:
+    from .logger import Logger
 
-class WAFPool:
-    """A shared WAF handle with per-transaction construction.
 
-    Matches the shape of `coraza-node`'s `WAFPool` — `new_transaction()`
-    hands back a Transaction without the caller caring which worker
-    executes it.
+class WAFRef:
+    """Thin reference wrapper that adapts a single `WAF` to the same
+    `new_transaction()` shape adapters expect.
+
+    NOT a multi-process pool — see `docs/scaling.md` for gunicorn /
+    uvicorn worker patterns. One WAF per worker process; share the
+    `WAFRef` across threads inside a single process.
     """
 
-    __slots__ = ("_size", "_waf")
+    __slots__ = ("_waf",)
 
-    def __init__(self, config: WAFConfig, *, size: int = 1) -> None:
-        if size < 1:
-            raise ValueError("WAFPool size must be >= 1")
+    def __init__(self, config: WAFConfig) -> None:
         self._waf = create_waf(config)
-        self._size = size
-
-    @property
-    def size(self) -> int:
-        return self._size
 
     @property
     def mode(self) -> ProcessMode:
         return self._waf.mode
+
+    @property
+    def logger(self) -> Logger:
+        return self._waf.logger
+
+    @property
+    def destroyed(self) -> bool:
+        return self._waf._closed
 
     @property
     def waf(self) -> WAF:
@@ -52,15 +60,15 @@ class WAFPool:
     def close(self) -> None:
         self._waf.close()
 
-    def __enter__(self) -> WAFPool:
+    def __enter__(self) -> WAFRef:
         return self
 
     def __exit__(self, *_exc: object) -> None:
         self.close()
 
 
-def create_waf_pool(config: WAFConfig, *, size: int = 1) -> WAFPool:
-    return WAFPool(config, size=size)
+def create_waf_ref(config: WAFConfig) -> WAFRef:
+    return WAFRef(config)
 
 
-__all__ = ["WAFPool", "create_waf_pool"]
+__all__ = ["WAFRef", "create_waf_ref"]
