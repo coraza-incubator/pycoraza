@@ -247,9 +247,16 @@ app.wsgi_app = CorazaMiddleware(
 )
 ```
 
+## Middleware ordering
+
+For where `CorazaMiddleware` belongs relative to ProxyFix,
+Flask-Compress, Flask-Login, and Flask-WTF/CSRF, see
+[`./middleware-ordering.md`](./middleware-ordering.md#flask).
+
 ## See also
 
 - [`./quickstart.md`](./quickstart.md) — 5-minute first-request tutorial.
+- [`./middleware-ordering.md`](./middleware-ordering.md) — where the WAF goes in the stack.
 - [`./threat-model.md`](./threat-model.md) — fail-closed guarantees.
 - [`./crs-profiles.md`](./crs-profiles.md) — how to tune the rule set.
 - [`./performance.md`](./performance.md) — latency and throughput.
