@@ -51,6 +51,8 @@ docs/                           site + threat model + per-framework guides
 
 .github/workflows/
   ci.yml                        build libcoraza + matrix test
+  wheel-smoke.yml               install fresh wheel into clean venv,
+                                boot each adapter, probe 200/403/403
   release.yml                   cibuildwheel + PyPI publish on tag
   ftw.yml                       CRS corpus against each adapter
   bench.yml                     weekly k6 regression
@@ -227,6 +229,28 @@ Thresholds enforced by `pyproject.toml` and the `ci.yml` workflow.
 If you change the C ABI: all seven layers need touching. Start at
 `native/coraza_cdef.h`, then `abi.py`, then fake ABI in tests, then
 integration tests, then adapters.
+
+### Wheel-smoke gate
+
+`.github/workflows/wheel-smoke.yml` is the only CI lane that exercises
+the **published-wheel install path** users hit with `pip install
+pycoraza`. Editable installs (`pip install -e .`) hide whole classes
+of packaging regressions — wrong package data, missing rules, missing
+`_bindings/*.so`, broken extras. The smoke job builds a fresh sdist +
+wheel, installs the wheel into a clean consumer venv on a separate
+runner, boots each adapter (flask under gunicorn, fastapi/starlette
+under uvicorn) with `PYCORAZA_WAF=on PYCORAZA_MODE=block FTW=0`, and
+runs a 200/200/403/{200|403}/403 probe matrix (benign, XSS, SQLi-in-
+body, SQLi). Logic is in `bench/wheel_smoke.sh` so devs can repro:
+
+```sh
+LIBCORAZA_PREFIX=$(pwd)/build/libcoraza bash bench/wheel_smoke.sh dist/pycoraza-*.whl
+```
+
+The smoke wheel is NOT auditwheel-repaired — `libcoraza.so` is loaded
+via `LD_LIBRARY_PATH` from the build artifact. When you flip on
+auditwheel-repair in the smoke build, drop the `LIBCORAZA_PREFIX`
+requirement from the helper and the workflow's smoke job.
 
 ## Go-runtime signal policy
 
