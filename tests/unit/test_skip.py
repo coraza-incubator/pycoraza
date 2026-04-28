@@ -8,6 +8,7 @@ from pycoraza import (
     SkipOptions,
     build_skip_predicate,
 )
+from pycoraza.skip import normalize_path_for_skip
 
 
 class TestDefaults:
@@ -157,3 +158,38 @@ class TestDocstringSemantics:
     def test_docstring_documents_callable_contract(self) -> None:
         doc = build_skip_predicate.__doc__ or ""
         assert "(method" in doc and "path" in doc
+
+
+class TestNormalizePathForSkip:
+    """Path-parameter stripping closes the ``/admin;.png`` bypass."""
+
+    def test_no_semicolon_returns_input_unchanged(self) -> None:
+        assert normalize_path_for_skip("/api/users") == "/api/users"
+        assert normalize_path_for_skip("/static/app.js") == "/static/app.js"
+
+    def test_empty_string_pass_through(self) -> None:
+        assert normalize_path_for_skip("") == ""
+
+    def test_strips_trailing_path_param(self) -> None:
+        assert normalize_path_for_skip("/admin;.png") == "/admin"
+        assert normalize_path_for_skip("/admin;jsessionid=abc") == "/admin"
+
+    def test_strips_per_segment(self) -> None:
+        """RFC 3986 path parameters are per-segment — strip from each."""
+        assert (
+            normalize_path_for_skip("/foo;a/bar;b/baz;c") == "/foo/bar/baz"
+        )
+
+    def test_preserves_leaf_extension(self) -> None:
+        """``/foo/bar;baz/qux.png`` keeps its leaf for ``.png`` skip."""
+        assert (
+            normalize_path_for_skip("/foo/bar;baz/qux.png")
+            == "/foo/bar/qux.png"
+        )
+
+    def test_skip_predicate_uses_normalized_path(self) -> None:
+        """Documentary: the static-asset skip predicate, fed the
+        normalized path, no longer bypasses ``/admin;.png``."""
+        skip = build_skip_predicate(None)
+        assert skip("GET", normalize_path_for_skip("/admin;.png")) is False
+        assert skip("GET", normalize_path_for_skip("/static/app.js")) is True

@@ -6,6 +6,22 @@ pycoraza-specific opt-in presets (`PROBE_PATHS`, `PROBE_METHODS`).
 A skip predicate takes `(method, path)` and returns True to bypass the
 WAF. Keeping the signature method-aware lets callers opt into skipping
 HEAD/OPTIONS requests without forcing the adapter to parse it twice.
+
+Adapter-side normalization
+--------------------------
+Adapters MUST pass a normalized path to the predicate, not the raw
+``PATH_INFO`` / ``request.path`` / ``scope["path"]`` string. The
+normalizer strips RFC 3986 path parameters (the ``;...`` suffix on
+each segment) before extension and prefix matching. This closes a
+bypass class where ``/admin;.png`` would match the ``.png`` extension
+skip and silently disable the WAF for the ``/admin`` route — most
+routers (Django's URL resolver, Flask's Werkzeug, Starlette's path
+converter) ignore the ``;...`` portion when dispatching, so the
+attacker reaches ``/admin`` while the WAF saw a static asset.
+
+Use ``normalize_path_for_skip`` from this module before invoking the
+predicate. The original (un-normalized) path is what gets forwarded
+to Coraza so rules see what the attacker actually sent.
 """
 
 from __future__ import annotations
@@ -16,6 +32,25 @@ from .types import SkipOptions
 
 SkipPredicate = Callable[[str, str], bool]
 SkipArg = SkipOptions | SkipPredicate | bool | None
+
+
+def normalize_path_for_skip(path: str) -> str:
+    """Strip RFC 3986 path parameters (`;...`) from each path segment.
+
+    Mirrors what most modern routers do at dispatch time. Without this,
+    a request to ``/admin;.png`` matches the default ``.png`` extension
+    skip but the framework router still dispatches to ``/admin`` —
+    bypassing the WAF for the entire admin route.
+
+    The returned string is for skip-predicate matching only. The full
+    original path is still forwarded to Coraza so the WAF evaluates
+    the bytes the attacker actually sent.
+    """
+    if not path or ";" not in path:
+        return path
+    segments = path.split("/")
+    normalized = [seg.split(";", 1)[0] for seg in segments]
+    return "/".join(normalized)
 
 
 def build_skip_predicate(arg: SkipArg) -> SkipPredicate:
@@ -107,4 +142,9 @@ def _never_skip(_method: str, _path: str) -> bool:
     return False
 
 
-__all__ = ["SkipArg", "SkipPredicate", "build_skip_predicate"]
+__all__ = [
+    "SkipArg",
+    "SkipPredicate",
+    "build_skip_predicate",
+    "normalize_path_for_skip",
+]

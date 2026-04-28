@@ -17,7 +17,7 @@ from urllib.parse import quote
 
 from ..abi import CorazaError
 from ..client_ip import ClientIPArg, ClientIPExtractor, resolve_extractor
-from ..skip import SkipArg, build_skip_predicate
+from ..skip import SkipArg, build_skip_predicate, normalize_path_for_skip
 from ..types import Interruption, OnWAFError, OnWAFErrorArg, ProcessMode, RequestInfo
 
 if TYPE_CHECKING:
@@ -58,7 +58,12 @@ class CorazaMiddleware:
     ) -> Iterable[bytes]:
         path = environ.get("PATH_INFO", "")
         method = environ.get("REQUEST_METHOD", "GET")
-        if self._skip(method, path):
+        # Normalize before skip-matching: ``/admin;.png`` must NOT
+        # match the ``.png`` extension skip — Werkzeug's router strips
+        # ``;...`` segments at dispatch, so the request still hits the
+        # ``/admin`` view. The original ``path`` is unchanged for what
+        # we forward to Coraza below.
+        if self._skip(method, normalize_path_for_skip(path)):
             return self._app(environ, start_response)
 
         request_info = _request_info_from_environ(environ, path, self._extract_client_ip)
@@ -255,6 +260,49 @@ def _request_info_from_environ(
     )
 
 
+# RFC 7230 §3.2.2 list-valued request headers: repeated lines and
+# comma-separated single-line forms are semantically equivalent. WSGI
+# already collapses them into a comma-joined env var, so re-splitting
+# on ``,`` recovers the original entries for Coraza.
+#
+# Singular headers (``Content-Type``, ``Host``, ``Authorization``,
+# ``User-Agent``, etc.) are deliberately NOT in this set — splitting
+# them would shred legitimate values like a quoted MIME parameter
+# ``application/json; charset="a, b"`` or a multipart boundary.
+#
+# ``Cookie`` is here because while RFC 6265 nominally bans splitting
+# on ``,`` inside a single ``Cookie`` header, in practice WSGI's env
+# only ever has one ``Cookie`` line per request and it's already
+# semicolon-delimited; the comma split is a no-op for normal traffic
+# but recovers proxy-merged duplicates if a misbehaving intermediary
+# does merge them.
+_LIST_VALUED_REQUEST_HEADERS = frozenset({
+    "x-forwarded-for",
+    "forwarded",
+    "cookie",
+    "accept",
+    "accept-encoding",
+    "accept-language",
+    "via",
+    "warning",
+    "x-forwarded-proto",
+    "x-forwarded-host",
+})
+
+
+def _split_list_header(value: str) -> Iterable[str]:
+    """Split a comma-joined list-valued header into trimmed entries.
+
+    Empty entries (``a,,b``) are dropped — they have no semantic
+    meaning per RFC 7230 §3.2.2 and forwarding them only confuses
+    rule operators.
+    """
+    for entry in value.split(","):
+        trimmed = entry.strip()
+        if trimmed:
+            yield trimmed
+
+
 def _iter_wsgi_headers(environ: WSGIEnviron) -> Iterable[tuple[str, str]]:
     """Yield request headers as `(name, value)` tuples for the WAF.
 
@@ -263,14 +311,23 @@ def _iter_wsgi_headers(environ: WSGIEnviron) -> Iterable[tuple[str, str]]:
     ``CONTENT_LENGTH``) with proper title-cased names. We fall back to
     a manual loop if Werkzeug isn't installed (pure-WSGI deployments).
 
-    Note on multi-value headers: PEP 3333 collapses repeated request
-    headers into a single comma-joined env var, so by the time the WAF
-    sees them they are already merged. This is a WSGI-spec limitation,
-    not something we can recover from on the request side. The shape
-    remains ``Iterable[tuple[str, str]]`` so duplicate entries are
-    forwarded as distinct tuples whenever the underlying source does
-    preserve them — and the response side (a list of tuples emitted by
-    ``start_response``) does, e.g. for multiple ``Set-Cookie`` headers.
+    Multi-value handling: PEP 3333 collapses repeated request headers
+    into a single comma-joined env var. For the RFC 7230 list-valued
+    set (``X-Forwarded-For``, ``Forwarded``, ``Accept`` family, ``Via``,
+    ``Warning``, ``X-Forwarded-Proto/Host``, ``Cookie``) we re-split
+    on ``,`` so each underlying entry reaches the WAF as its own
+    ``(name, value)`` tuple — otherwise a rule keyed on an exact
+    ``Content-Type``-style match against a singular header value would
+    miss attacks where the merged string is e.g.
+    ``application/json, text/html; <attack>``. Singular headers
+    (``Content-Type``, ``Host``, ``Authorization``, ``User-Agent``,
+    ``Content-Length``, ``Referer``, ``Origin``, etc.) are forwarded
+    verbatim — splitting them on ``,`` would shred legitimate quoted
+    parameters.
+
+    On the response side a list of tuples emitted by ``start_response``
+    already preserves duplicates (e.g. multiple ``Set-Cookie`` lines),
+    so no recovery is needed there.
     """
     try:
         from werkzeug.datastructures import EnvironHeaders
@@ -278,7 +335,12 @@ def _iter_wsgi_headers(environ: WSGIEnviron) -> Iterable[tuple[str, str]]:
         yield from _iter_wsgi_headers_fallback(environ)
         return
     for name, value in EnvironHeaders(environ):
-        yield name.lower(), value
+        lowered = name.lower()
+        if lowered in _LIST_VALUED_REQUEST_HEADERS and "," in value:
+            for entry in _split_list_header(value):
+                yield lowered, entry
+        else:
+            yield lowered, value
 
 
 def _iter_wsgi_headers_fallback(environ: WSGIEnviron) -> Iterable[tuple[str, str]]:
@@ -286,7 +348,12 @@ def _iter_wsgi_headers_fallback(environ: WSGIEnviron) -> Iterable[tuple[str, str
         if not isinstance(value, str):
             continue
         if key.startswith("HTTP_"):
-            yield key[5:].replace("_", "-").lower(), value
+            lowered = key[5:].replace("_", "-").lower()
+            if lowered in _LIST_VALUED_REQUEST_HEADERS and "," in value:
+                for entry in _split_list_header(value):
+                    yield lowered, entry
+            else:
+                yield lowered, value
         elif key in ("CONTENT_TYPE", "CONTENT_LENGTH"):
             yield key.replace("_", "-").lower(), value
 
