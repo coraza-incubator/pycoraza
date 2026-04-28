@@ -113,6 +113,25 @@ class SkipOptions:
         from pycoraza import SkipOptions, PROBE_PATHS, PROBE_METHODS
         skip = SkipOptions(prefixes=SkipOptions.default_prefixes() + PROBE_PATHS,
                            methods=PROBE_METHODS)
+
+    Default prefixes
+    ----------------
+
+    The default prefix set is deliberately narrow:
+
+      * ``/_next/static/`` — Next.js fingerprinted bundle dir; the
+        framework always serves immutable hashed assets here.
+      * ``/assets/`` — the conventional Vite/Webpack output dir for
+        compiled assets.
+      * ``/favicon.ico`` — exact path, browsers fetch it on every page.
+
+    ``/static/`` is **not** in the default set. It is a common Django /
+    Flask URL prefix that operators frequently mount real *dynamic*
+    handlers under (DRF API serializers, signed-URL redirectors, file
+    upload endpoints). Bypassing the WAF for the entire ``/static/``
+    surface by default has bitten enough deployments that we now
+    require an explicit opt-in. If your app does serve only static
+    files under ``/static/``, add it to ``prefixes`` yourself.
     """
 
     extensions: tuple[str, ...] = (
@@ -122,9 +141,8 @@ class SkipOptions:
         ".pdf", ".zip", ".tar", ".gz",
     )
     prefixes: tuple[str, ...] = (
-        "/static/",
-        "/assets/",
         "/_next/static/",
+        "/assets/",
         "/favicon.ico",
     )
     extra_paths: tuple[str, ...] = field(default_factory=tuple)
@@ -133,12 +151,10 @@ class SkipOptions:
     @staticmethod
     def default_prefixes() -> tuple[str, ...]:
         return (
-            "/static/",
-            "/assets/",
             "/_next/static/",
+            "/assets/",
             "/favicon.ico",
         )
-
 
 # Opt-in preset: common health / readiness / metrics endpoints. Skipping
 # these is a deliberate trade: you lose WAF coverage on paths that are

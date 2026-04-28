@@ -90,8 +90,14 @@ class TestSkipOptions:
         opts = SkipOptions()
         assert ".png" in opts.extensions
         assert ".css" in opts.extensions
-        assert "/static/" in opts.prefixes
         assert "/_next/static/" in opts.prefixes
+        assert "/assets/" in opts.prefixes
+        assert "/favicon.ico" in opts.prefixes
+        # /static/ was dropped from the default prefix set: the WAF
+        # bypassing every route under /static/ is too aggressive when
+        # apps mount real handlers there. Add it to ``prefixes`` only
+        # if the entire path serves static assets.
+        assert "/static/" not in opts.prefixes
         assert opts.extra_paths == ()
 
     def test_extra_paths_are_independent(self) -> None:

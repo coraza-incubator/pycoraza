@@ -137,7 +137,10 @@ class CorazaMiddleware:
             raise
 
         if self._inspect_response:
-            _inspect_response(tx, response)
+            blocked = _inspect_response(tx, response)
+            if blocked is not None and self._waf.mode is ProcessMode.BLOCK:
+                _finalize(tx)
+                return self._on_block(blocked, request)
 
         _finalize(tx)
         return response
@@ -235,7 +238,13 @@ def _safe_int(value: Any) -> int:
         return 0
 
 
-def _inspect_response(tx: Any, response: HttpResponse) -> None:
+def _inspect_response(tx: Any, response: HttpResponse) -> Interruption | None:
+    """Drive phase-3/4 over the buffered Django response.
+
+    Returns the interruption when a response-side rule fires, or
+    ``None`` otherwise. Callers use that to decide whether to swap in
+    a block response (BLOCK mode) or just record the match (DETECT).
+    """
     status = int(getattr(response, "status_code", 200))
     try:
         headers = [(str(k), str(v)) for k, v in response.items()]
@@ -245,20 +254,27 @@ def _inspect_response(tx: Any, response: HttpResponse) -> None:
         tx.add_response_headers(headers)
         tx.process_response_headers(status)
     except CorazaError:
-        return
+        return None
 
     body = getattr(response, "content", b"") or b""
     if not isinstance(body, (bytes, bytearray)):
-        return
+        try:
+            return tx.interruption()
+        except CorazaError:
+            return None
     if body:
         try:
             tx.append_response_body(bytes(body))
         except CorazaError:
-            return
+            return None
     try:
         tx.process_response_body()
     except CorazaError:
-        return
+        return None
+    try:
+        return tx.interruption()
+    except CorazaError:
+        return None
 
 
 def _finalize(tx: Any) -> None:
