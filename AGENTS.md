@@ -33,7 +33,7 @@ src/pycoraza/
   abi.py                        pythonic wrapper over the C ABI
   waf.py                        WAF class (rules + mode + logger)
   transaction.py                per-request Transaction class
-  pool.py                       WAFPool (process pool, optional)
+  pool.py                       WAFRef — thin per-process WAF reference (see docs/scaling.md); `WAFPool` is a deprecated alias.
   skip.py                       shared static-asset bypass
   logger.py                     Logger protocol + default + silent loggers
   types.py                      dataclasses: Interruption, MatchedRule, etc

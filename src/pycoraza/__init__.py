@@ -22,7 +22,7 @@ from importlib.metadata import version as _pkg_version
 from .abi import Abi, CorazaError
 from .client_ip import DEFAULT_PRIVATE_CIDRS, trusted_proxy
 from .logger import Logger, console_logger, silent_logger
-from .pool import WAFPool, create_waf_pool
+from .pool import WAFPool, WAFRef, create_waf_pool, create_waf_ref
 from .skip import SkipArg, SkipPredicate, build_skip_predicate
 from .transaction import Transaction
 from .types import (
@@ -40,6 +40,7 @@ from .types import (
     SkipOptions,
     WAFConfig,
     WAFErrorPolicy,
+    WAFLike,
 )
 from .waf import WAF, create_waf
 
@@ -71,12 +72,15 @@ __all__ = [
     "Transaction",
     "WAFConfig",
     "WAFErrorPolicy",
+    "WAFLike",
     "WAFPool",
+    "WAFRef",
     "__version__",
     "build_skip_predicate",
     "console_logger",
     "create_waf",
     "create_waf_pool",
+    "create_waf_ref",
     "silent_logger",
     "trusted_proxy",
 ]
