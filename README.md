@@ -16,6 +16,7 @@ WAF error, opt-in response inspection).
 pip install pycoraza                 # core only
 pip install "pycoraza[flask]"        # + Flask middleware
 pip install "pycoraza[fastapi]"      # + FastAPI / Starlette middleware
+pip install "pycoraza[django]"       # + Django middleware
 pip install "pycoraza[all]"          # everything
 ```
 

@@ -1,0 +1,1 @@
+Added `pycoraza.django.CorazaMiddleware` — a Django 4.2+/5.x adapter with the same security-first defaults as the Flask and Starlette adapters. Install via `pip install "pycoraza[django]"`. See `docs/django.md`.

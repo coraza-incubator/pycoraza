@@ -1,0 +1,3 @@
+pycoraza[django]
+django>=4.2
+gunicorn>=22.0
