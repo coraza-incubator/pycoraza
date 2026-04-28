@@ -248,6 +248,61 @@ class Transaction:
     def is_response_body_processable(self) -> bool:
         return self._waf.abi.is_response_body_processable(self.handle)
 
+    def is_rule_engine_off(self) -> bool:
+        """Cheap predicate adapters use to short-circuit `SecRuleEngine Off`.
+
+        When the WAF is configured with `SecRuleEngine Off` (or
+        `DetectionOnly` when callers want to skip even the audit), every
+        per-phase round-trip into Go is wasted work — adapters can
+        return the downstream response directly after closing the
+        transaction.
+
+        Until upstream libcoraza ships `coraza_is_rule_engine_off` this
+        raises `NotImplementedError`. Callers MUST treat the raise as
+        "assume the engine is on" and continue with the full pipeline:
+        a missing predicate is never a bypass.
+        """
+        return self._waf.abi.is_rule_engine_off(self.handle)
+
+    def is_request_body_accessible(self) -> bool:
+        """Predicate: should the request body be fed to the engine?
+
+        Mirrors `is_response_body_processable` for the request side and
+        reflects `SecRequestBodyAccess`. Until upstream ships
+        `coraza_is_request_body_accessible` this raises
+        `NotImplementedError`; adapters MUST continue calling
+        `append_request_body` unconditionally rather than skipping on
+        the raise.
+        """
+        return self._waf.abi.is_request_body_accessible(self.handle)
+
+    def is_response_body_accessible(self) -> bool:
+        """Predicate: is response-body inspection enabled at all?
+
+        Distinct from `is_response_body_processable`, which answers a
+        per-content-type question. `accessible` reflects the global
+        `SecResponseBodyAccess` toggle. Raises `NotImplementedError`
+        until upstream lands the predicate.
+        """
+        return self._waf.abi.is_response_body_accessible(self.handle)
+
+    def reset(self) -> None:
+        """Reset transaction state for keep-alive connection reuse.
+
+        Coraza's Go engine does not currently support resetting a
+        transaction in place — internal phase state, the matched-rule
+        log, and pending interventions are bound to the live handle.
+        Adapters that want to reuse a transaction across requests on a
+        single keep-alive connection MUST close this transaction and
+        call `WAF.new_transaction()` for the next one.
+
+        Raises `NotImplementedError` unconditionally on every libcoraza
+        version pycoraza currently supports. Track upstream:
+        https://github.com/corazawaf/libcoraza/issues — add a
+        `coraza_reset_transaction(coraza_transaction_t)` API.
+        """
+        self._waf.abi.reset_transaction(self.handle)
+
     def process_logging(self) -> None:
         if self._closed:
             return

@@ -247,6 +247,85 @@ class Abi:
     def is_response_body_processable(self, tx: Any) -> bool:
         return bool(self._lib.coraza_is_response_body_processable(tx))
 
+    def is_rule_engine_off(self, tx: Any) -> bool:
+        """Cheap predicate: is `SecRuleEngine Off` set on the active config?
+
+        Adapters use this for early-exit after `new_transaction()` so a
+        detect/disabled deployment skips the per-phase round-trip. The
+        upstream C ABI does NOT yet expose this; track:
+        https://github.com/corazawaf/libcoraza/issues/new — add a
+        `coraza_is_rule_engine_off(coraza_transaction_t)` predicate.
+
+        Until upstream lands a function, this raises `NotImplementedError`
+        rather than silently returning a guess. Callers MUST treat the
+        absence as "engine may be on" and continue with the normal
+        evaluation pipeline — never bypass on raise.
+        """
+        fn = getattr(self._lib, "coraza_is_rule_engine_off", None)
+        if fn is None:
+            raise NotImplementedError(
+                "libcoraza does not expose coraza_is_rule_engine_off; "
+                "needs upstream API addition. "
+                "See https://github.com/corazawaf/libcoraza/issues for tracking."
+            )
+        return bool(fn(tx))
+
+    def is_request_body_accessible(self, tx: Any) -> bool:
+        """Predicate: is the request body in scope for this transaction?
+
+        Mirrors `is_response_body_processable` for the request side.
+        Upstream libcoraza does not yet ship `coraza_is_request_body_accessible`;
+        until it does we raise `NotImplementedError`. Adapters must
+        continue to drive request-body phases unconditionally — fail
+        closed, never skip body inspection on a missing predicate.
+        """
+        fn = getattr(self._lib, "coraza_is_request_body_accessible", None)
+        if fn is None:
+            raise NotImplementedError(
+                "libcoraza does not expose coraza_is_request_body_accessible; "
+                "needs upstream API addition. "
+                "See https://github.com/corazawaf/libcoraza/issues for tracking."
+            )
+        return bool(fn(tx))
+
+    def is_response_body_accessible(self, tx: Any) -> bool:
+        """Predicate distinct from `is_response_body_processable`.
+
+        `processable` answers "should the engine evaluate this content
+        type?" (driven by `SecResponseBodyMimeType`). `accessible`
+        answers "is response-body inspection turned on at all?" (driven
+        by `SecResponseBodyAccess`). Upstream libcoraza does not yet
+        expose this predicate — raises `NotImplementedError`.
+        """
+        fn = getattr(self._lib, "coraza_is_response_body_accessible", None)
+        if fn is None:
+            raise NotImplementedError(
+                "libcoraza does not expose coraza_is_response_body_accessible; "
+                "needs upstream API addition. "
+                "See https://github.com/corazawaf/libcoraza/issues for tracking."
+            )
+        return bool(fn(tx))
+
+    def reset_transaction(self, tx: Any) -> None:
+        """Reset transaction state for keep-alive reuse.
+
+        Coraza's Go engine has no public reset on a transaction — its
+        internal `Variables` map and matched-rule state are owned by
+        the live transaction and are not safe to reuse. Until libcoraza
+        exposes `coraza_reset_transaction`, callers MUST close the
+        current transaction and call `new_transaction()` for the next
+        request.
+        """
+        fn = getattr(self._lib, "coraza_reset_transaction", None)
+        if fn is None:
+            raise NotImplementedError(
+                "libcoraza does not expose coraza_reset_transaction; "
+                "transaction reuse is not supported by the current "
+                "libcoraza version — create a new transaction instead. "
+                "See https://github.com/corazawaf/libcoraza/issues for tracking."
+            )
+        self._check(fn(tx), "coraza_reset_transaction")
+
     def process_logging(self, tx: Any) -> None:
         self._check(self._lib.coraza_process_logging(tx), "coraza_process_logging")
 

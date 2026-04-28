@@ -159,9 +159,38 @@ class FakeLib:
         self.raise_on_process_uri: bool = False
         self.fail_rc_for: set[str] = set()
         self.response_body_processable: bool = True
+        # Tx-inspectability predicates: opt-in per test. Defaulting these
+        # to `None` keeps the fake faithful to current upstream libcoraza
+        # (which does not export these functions); tests that need to
+        # exercise the True/False branch flip the corresponding flag.
+        self.rule_engine_off: bool | None = None
+        self.request_body_accessible: bool | None = None
+        self.response_body_accessible: bool | None = None
+        # Symbols that the fake should pretend are NOT exported by
+        # libcoraza. `Abi.is_*` does `getattr(self._lib, name, None)`;
+        # adding the symbol name here makes that lookup fall through to
+        # the `NotImplementedError` branch — used to assert the
+        # forward-compat contract without monkeypatching the class.
+        self.missing_symbols: set[str] = set()
         self._next_severity: int | None = None
 
         self._ffi = _FakeFFI()
+
+    def __getattribute__(self, name: str) -> Any:
+        # `Abi.is_rule_engine_off` etc. probe for the C symbol via
+        # `getattr(self._lib, name, None)` and treat the missing case
+        # as "upstream libcoraza doesn't ship it yet". Tests opt into
+        # that branch by adding the symbol name to `self.missing_symbols`.
+        # We do the suppression here (single chokepoint) so per-test
+        # state is not polluted by class-level deletions.
+        if name.startswith("coraza_"):
+            try:
+                missing = object.__getattribute__(self, "missing_symbols")
+            except AttributeError:
+                missing = ()
+            if name in missing:
+                raise AttributeError(name)
+        return object.__getattribute__(self, name)
 
     def _log(self, *call: Any) -> None:
         self.call_log.append(tuple(call))
@@ -437,6 +466,43 @@ class FakeLib:
     def coraza_is_response_body_processable(self, tx: Any) -> int:
         self._log("is_response_body_processable")
         return 1 if self.response_body_processable else 0
+
+    # Forward-looking predicates. Upstream libcoraza does not export
+    # these yet; we ship them on the fake so the wrapper plumbing can
+    # be unit-tested. Tests that need to exercise the
+    # `NotImplementedError` (no upstream symbol) path add the symbol
+    # name to `self.missing_symbols` — the `__getattribute__` shim
+    # makes the attribute lookup fail. The real Abi wrapper looks them
+    # up via `getattr(... default=None)` so absence is the signal.
+    def coraza_is_rule_engine_off(self, tx: Any) -> int:
+        self._log("is_rule_engine_off")
+        return 1 if self.rule_engine_off else 0
+
+    def coraza_is_request_body_accessible(self, tx: Any) -> int:
+        self._log("is_request_body_accessible")
+        return 1 if self.request_body_accessible else 0
+
+    def coraza_is_response_body_accessible(self, tx: Any) -> int:
+        self._log("is_response_body_accessible")
+        return 1 if self.response_body_accessible else 0
+
+    def coraza_reset_transaction(self, tx: Any) -> int:
+        self._log("reset_transaction")
+        state = self.txs.get(id(tx))
+        if state is not None:
+            state.interruption_spec = None
+            state.intervention_served = False
+            state.request_body.clear()
+            state.response_body.clear()
+            state.request_headers.clear()
+            state.response_headers.clear()
+            state.connection_done = False
+            state.request_headers_processed = False
+            state.request_body_processed = False
+            state.response_headers_processed = False
+            state.response_body_processed = False
+            state.logged = False
+        return self._fail_rc("reset_transaction")
 
     def coraza_process_logging(self, tx: Any) -> int:
         state = self.txs.get(id(tx))

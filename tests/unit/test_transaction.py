@@ -305,3 +305,153 @@ class TestMatchedRules:
         assert len(tx.matched_rules()) == 1
         tx.close()
         waf.close()
+
+
+class TestInspectabilityPredicates:
+    """`is_rule_engine_off` / `is_request_body_accessible` /
+    `is_response_body_accessible` are forward-looking predicates that
+    upstream libcoraza does not yet expose. The wrapper falls back to
+    `NotImplementedError` when the C symbol is absent.
+    """
+
+    def test_rule_engine_off_true_when_lib_returns_one(self, fake_abi: FakeLib) -> None:
+        fake_abi.rule_engine_off = True
+        waf = _make_waf()
+        tx = waf.new_transaction()
+        try:
+            assert tx.is_rule_engine_off() is True
+        finally:
+            tx.close()
+            waf.close()
+
+    def test_rule_engine_off_false_when_engine_on(self, fake_abi: FakeLib) -> None:
+        # SecLang: `SecRuleEngine On` — predicate should report False.
+        fake_abi.rule_engine_off = False
+        waf = _make_waf(mode=ProcessMode.BLOCK)
+        tx = waf.new_transaction()
+        try:
+            assert tx.is_rule_engine_off() is False
+        finally:
+            tx.close()
+            waf.close()
+
+    def test_rule_engine_off_raises_when_lib_lacks_symbol(self, fake_abi: FakeLib) -> None:
+        # Simulate the current upstream libcoraza state: the C symbol is
+        # not exported. The wrapper must raise NotImplementedError, not
+        # silently return a value (silent default would be a bypass).
+        fake_abi.missing_symbols.add("coraza_is_rule_engine_off")
+        waf = _make_waf()
+        tx = waf.new_transaction()
+        try:
+            with pytest.raises(NotImplementedError, match="coraza_is_rule_engine_off"):
+                tx.is_rule_engine_off()
+        finally:
+            tx.close()
+            waf.close()
+
+    def test_request_body_accessible_true(self, fake_abi: FakeLib) -> None:
+        fake_abi.request_body_accessible = True
+        waf = _make_waf()
+        tx = waf.new_transaction()
+        try:
+            assert tx.is_request_body_accessible() is True
+        finally:
+            tx.close()
+            waf.close()
+
+    def test_request_body_accessible_false(self, fake_abi: FakeLib) -> None:
+        fake_abi.request_body_accessible = False
+        waf = _make_waf()
+        tx = waf.new_transaction()
+        try:
+            assert tx.is_request_body_accessible() is False
+        finally:
+            tx.close()
+            waf.close()
+
+    def test_request_body_accessible_raises_when_lib_lacks_symbol(
+        self, fake_abi: FakeLib
+    ) -> None:
+        fake_abi.missing_symbols.add("coraza_is_request_body_accessible")
+        waf = _make_waf()
+        tx = waf.new_transaction()
+        try:
+            with pytest.raises(
+                NotImplementedError, match="coraza_is_request_body_accessible"
+            ):
+                tx.is_request_body_accessible()
+        finally:
+            tx.close()
+            waf.close()
+
+    def test_response_body_accessible_true(self, fake_abi: FakeLib) -> None:
+        fake_abi.response_body_accessible = True
+        waf = _make_waf()
+        tx = waf.new_transaction()
+        try:
+            assert tx.is_response_body_accessible() is True
+        finally:
+            tx.close()
+            waf.close()
+
+    def test_response_body_accessible_false(self, fake_abi: FakeLib) -> None:
+        fake_abi.response_body_accessible = False
+        waf = _make_waf()
+        tx = waf.new_transaction()
+        try:
+            assert tx.is_response_body_accessible() is False
+        finally:
+            tx.close()
+            waf.close()
+
+    def test_response_body_accessible_raises_when_lib_lacks_symbol(
+        self, fake_abi: FakeLib
+    ) -> None:
+        fake_abi.missing_symbols.add("coraza_is_response_body_accessible")
+        waf = _make_waf()
+        tx = waf.new_transaction()
+        try:
+            with pytest.raises(
+                NotImplementedError, match="coraza_is_response_body_accessible"
+            ):
+                tx.is_response_body_accessible()
+        finally:
+            tx.close()
+            waf.close()
+
+
+class TestReset:
+    """`Transaction.reset()` is intended for keep-alive reuse. Until
+    upstream libcoraza ships `coraza_reset_transaction`, every call
+    raises `NotImplementedError` so callers fall back to creating a new
+    transaction (the safe path)."""
+
+    def test_reset_when_lib_lacks_symbol_raises(self, fake_abi: FakeLib) -> None:
+        # Mirror current upstream — no symbol exported.
+        fake_abi.missing_symbols.add("coraza_reset_transaction")
+        waf = _make_waf()
+        tx = waf.new_transaction()
+        try:
+            with pytest.raises(NotImplementedError, match="not supported"):
+                tx.reset()
+        finally:
+            tx.close()
+            waf.close()
+
+    def test_reset_threads_through_when_lib_supports_it(
+        self, fake_abi: FakeLib
+    ) -> None:
+        # Forward-compat check: once libcoraza ships the symbol, the
+        # wrapper invokes it. The fake's default implementation clears
+        # interruption state on the underlying handle.
+        fake_abi.trigger_uri_contains = "/attack"
+        waf = _make_waf()
+        tx = waf.new_transaction()
+        try:
+            tx.process_request_bundle(_req(url="/attack"))
+            assert tx.interruption() is not None
+            tx.reset()
+            assert ("reset_transaction",) in fake_abi.call_log
+        finally:
+            tx.close()
+            waf.close()
