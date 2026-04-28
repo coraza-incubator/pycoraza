@@ -6,7 +6,7 @@ import pytest
 from _fake_abi import FakeLib
 
 from pycoraza import CorazaError
-from pycoraza.abi import Abi
+from pycoraza.abi import Abi, parse_rule_id
 
 
 class TestLifecycle:
@@ -184,3 +184,28 @@ class TestProperties:
         a = Abi()
         b = Abi()
         assert a.lib is b.lib
+
+
+class TestParseRuleId:
+    def test_pulls_id_from_canonical_log(self) -> None:
+        log = (
+            'Coraza: Warning. detected sqli '
+            '[file "rules/REQUEST-942.conf"] [line "100"] '
+            '[id "942100"] [msg "SQLi attack"] [severity "CRITICAL"]'
+        )
+        assert parse_rule_id(log) == 942100
+
+    def test_returns_zero_when_missing(self) -> None:
+        assert parse_rule_id("no id token here") == 0
+
+    def test_returns_zero_on_empty(self) -> None:
+        assert parse_rule_id("") == 0
+
+    def test_picks_first_id_token(self) -> None:
+        log = '[id "1001"] [msg "..."] [id "9999"]'
+        assert parse_rule_id(log) == 1001
+
+    def test_ignores_non_numeric_ids(self) -> None:
+        # Real Coraza always emits numeric ids; any non-numeric form is
+        # garbage we should not crash on.
+        assert parse_rule_id('[id "abc"]') == 0

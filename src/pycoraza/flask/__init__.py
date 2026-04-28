@@ -73,6 +73,7 @@ class CorazaMiddleware:
             if interrupted:
                 intr = tx.interruption()
                 if intr is not None and self._waf.mode is ProcessMode.BLOCK:
+                    _log_block(self._waf.logger, intr, tx.matched_rules())
                     result = _call_on_block(self._on_block, intr, environ, start_response)
                     return _finalize_now(result, tx)
         except CorazaError as exc:
@@ -87,6 +88,7 @@ class CorazaMiddleware:
             tx,
             self._inspect_response,
             self._waf.mode,
+            self._waf.logger,
         )
         return _finalize_now(response_body, tx)
 
@@ -148,7 +150,9 @@ def _default_on_block(
     payload = (
         f'{{"error":"blocked","rule_id":{interruption.rule_id},'
         f'"action":{_json_str(interruption.action)},'
-        f'"data":{_json_str(interruption.data)}}}'
+        f'"msg":{_json_str(interruption.data)},'
+        f'"data":{_json_str(interruption.data)},'
+        f'"status":{status}}}'
     ).encode()
     reason = "Blocked" if status < 500 else "Error"
     start_response(
@@ -159,6 +163,31 @@ def _default_on_block(
         ],
     )
     return [payload]
+
+
+def _log_block(logger: Any, intr: Interruption, matched: list) -> None:
+    """Emit the block + the full match chain.
+
+    Operators triaging a CRS false positive need both the disruptive
+    rule (`warning`-level, the headline) and the chain of contributing
+    rules (`info`-level, scrolling chain). We do this in the middleware
+    instead of inside `Transaction` so users who drive the WAF directly
+    can format their own log shape.
+    """
+    logger.warning(
+        "blocked",
+        rule_id=intr.rule_id,
+        status=intr.status,
+        action=intr.action,
+        msg=intr.data,
+    )
+    for rule in matched:
+        logger.info(
+            "rule chain",
+            rule_id=rule.id,
+            severity=rule.severity,
+            msg=rule.message,
+        )
 
 
 def _json_str(s: str) -> str:
@@ -299,6 +328,7 @@ def _capture_response(
     tx: Transaction,
     inspect: bool,
     mode: ProcessMode,
+    logger: Any,
 ) -> Iterable[bytes]:
     capture = _CaptureStartResponse(start_response, tx, inspect)
     raw = app(environ, capture)
@@ -315,6 +345,7 @@ def _capture_response(
         if tx.process_response_body() and mode is ProcessMode.BLOCK:
             intr = tx.interruption()
             if intr is not None:
+                _log_block(logger, intr, tx.matched_rules())
                 return _default_on_block(intr, environ, start_response)
     except CorazaError:
         pass

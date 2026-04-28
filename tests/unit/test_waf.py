@@ -84,3 +84,51 @@ class TestContextManager:
             assert waf.handle is not None
         with pytest.raises(CorazaError):
             _ = waf.handle
+
+
+class TestErrorCallbackWiring:
+    def test_callback_registered_before_new_waf(self, fake_abi: FakeLib) -> None:
+        """Order: rules_add → set_error_callback → new_waf.
+
+        libcoraza consumes the config in `coraza_new_waf`; callbacks
+        must be attached before the consume, otherwise they're attached
+        to a config the engine no longer references.
+        """
+        create_waf(WAFConfig(rules="r"))
+        kinds = [c[0] for c in fake_abi.call_log]
+        assert kinds.index("set_error_callback") < kinds.index("new_waf")
+
+    def test_callback_routes_match_to_active_transaction(
+        self, fake_abi: FakeLib
+    ) -> None:
+        from _fake_abi import _InterventionSpec
+
+        fake_abi.trigger_uri_contains = "/attack"
+        fake_abi.interruption_spec = _InterventionSpec(
+            rule_id=942100,
+            error_log='[id "942100"] [msg "SQLi"]',
+        )
+        from pycoraza import RequestInfo
+
+        waf = create_waf(WAFConfig(rules="r", mode=ProcessMode.BLOCK))
+        tx = waf.new_transaction()
+        tx.process_request_bundle(
+            RequestInfo(method="GET", url="/attack", headers=())
+        )
+        assert any(r.id == 942100 for r in tx.matched_rules())
+        tx.close()
+        waf.close()
+
+    def test_match_outside_transaction_is_dropped(
+        self, fake_abi: FakeLib
+    ) -> None:
+        """No active transaction — callback drops the match safely.
+
+        Defensive against rule-engine validation messages emitted
+        during `coraza_new_waf` (which currently is not done by
+        libcoraza, but a future libcoraza could).
+        """
+        waf = create_waf(WAFConfig(rules="r"))
+        # Fire a fake match with no active transaction; must not raise.
+        waf._on_matched_rule(3, '[id "1234"] [msg "x"]')
+        waf.close()
