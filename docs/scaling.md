@@ -14,7 +14,6 @@ This document is the short, concrete recipe.
 - One `WAF` per worker process.
 - Threads inside that worker share the `WAF` for free.
 - `WAFRef` is a thin reference wrapper, not a multi-process pool.
-- The pre-1.0 `WAFPool` name is a deprecated alias for `WAFRef`.
 
 ## gunicorn (Flask, Django, any WSGI app)
 

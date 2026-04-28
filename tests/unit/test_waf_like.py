@@ -1,11 +1,4 @@
-"""Adapters accept any `WAFLike` (a `WAF` or a `WAFRef`).
-
-Pre-rename, the Django adapter ran a hard `isinstance(waf, WAF)`
-rejection that broke any code passing a `WAFRef`/`WAFPool`. The other
-adapters annotated `waf: WAF` but didn't actually check at runtime,
-so they happened to work. This suite locks in the post-rename
-contract: every adapter accepts both shapes uniformly.
-"""
+"""Adapters accept any `WAFLike` (a `WAF` or a `WAFRef`)."""
 
 from __future__ import annotations
 
