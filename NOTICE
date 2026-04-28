@@ -1,0 +1,55 @@
+pycoraza
+Copyright 2025 Juan Pablo Tosso
+
+This product includes software developed at, and distributed under the
+terms of, the Apache License, Version 2.0. A copy of the License is
+included in the LICENSE file in this distribution. Full upstream
+license texts for bundled and linked third-party components live under
+THIRD_PARTY_LICENSES/ and accompany the wheel and sdist.
+
+================================================================
+Third-party components bundled or linked at distribution time
+================================================================
+
+----------------------------------------------------------------
+libcoraza
+----------------------------------------------------------------
+The pycoraza wheel links against (and `auditwheel repair` bundles into
+`pycoraza.libs/`) `libcoraza.so`, the C shared library produced by the
+Coraza project at https://github.com/corazawaf/libcoraza.
+
+Copyright OWASP Coraza authors and contributors.
+Licensed under the Apache License, Version 2.0.
+See THIRD_PARTY_LICENSES/libcoraza-LICENSE.
+
+----------------------------------------------------------------
+Coraza
+----------------------------------------------------------------
+libcoraza embeds the Coraza WAF engine, the Go module developed at
+https://github.com/corazawaf/coraza.
+
+Copyright OWASP Coraza authors and contributors.
+Licensed under the Apache License, Version 2.0.
+See THIRD_PARTY_LICENSES/coraza-LICENSE.
+
+----------------------------------------------------------------
+OWASP CRS (Core Rule Set)
+----------------------------------------------------------------
+pycoraza ships a copy of the OWASP CRS rule files under
+`pycoraza/coreruleset/rules/`. CRS is developed at
+https://github.com/coreruleset/coreruleset.
+
+Copyright OWASP CRS Project and contributors.
+Licensed under the Apache License, Version 2.0.
+See THIRD_PARTY_LICENSES/coreruleset-LICENSE.
+
+================================================================
+Notes
+================================================================
+
+- The pinned upstream tags for libcoraza, the embedded Coraza module,
+  and the CRS rule set are recorded in `native/version.txt`.
+- Build-time scripts under `native/scripts/` fetch upstream sources
+  by tag at build time (cibuildwheel `before-all` and the sdist build
+  hook) so the produced distributions ship the unmodified upstream
+  artifacts.

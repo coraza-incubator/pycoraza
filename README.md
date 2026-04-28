@@ -21,8 +21,38 @@ pip install "pycoraza[all]"          # everything
 ```
 
 Linux wheels ship `libcoraza.so` vendored — no system install required.
-Source distribution requires Go 1.25+ and SWIG 4+ to build libcoraza from
-source.
+
+### Installing from source
+
+The sdist on PyPI ships the OWASP CRS rules pre-fetched, but **does not**
+ship a pre-built `libcoraza.so`. When `pip install pycoraza` falls back
+to the sdist (Alpine/musl, custom distros, no manylinux match), the build
+hook compiles libcoraza locally. That requires:
+
+- Go **1.25+** on `PATH`
+- a C toolchain (`gcc` / `clang`, `make`)
+- SWIG 4+, `automake`, `autoconf`, `libtool`, `pkg-config`
+
+The fallback emits a clear error if Go is missing:
+
+```
+pycoraza requires Go 1.25+ when building from sdist;
+install Go or use a manylinux wheel
+(`pip install --only-binary=:all: pycoraza`).
+```
+
+To force the wheel-only install path on a supported platform:
+
+```sh
+pip install --only-binary=:all: pycoraza
+```
+
+If you have libcoraza already built somewhere on the system, point the
+build hook at it and skip the local Go build:
+
+```sh
+LIBCORAZA_PREFIX=/opt/libcoraza pip install pycoraza
+```
 
 ## Quick start — Flask
 

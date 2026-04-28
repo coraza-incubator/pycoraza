@@ -16,6 +16,9 @@ and `pycoraza.starlette` — install the appropriate extra.
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
+
 from .abi import Abi, CorazaError
 from .client_ip import DEFAULT_PRIVATE_CIDRS, trusted_proxy
 from .logger import Logger, console_logger, silent_logger
@@ -38,7 +41,10 @@ from .types import (
 )
 from .waf import WAF, create_waf
 
-__version__ = "0.1.0"
+try:
+    __version__ = _pkg_version("pycoraza")
+except PackageNotFoundError:  # editable / source-tree dev install
+    __version__ = "0.0.0+dev"
 
 __all__ = [
     "DEFAULT_PRIVATE_CIDRS",

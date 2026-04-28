@@ -161,14 +161,18 @@ jobs:
           if-no-files-found: error
 
   test-wheels:
-    name: Test wheel cp312 ${{ matrix.arch }}
+    name: Test abi3 wheel py${{ matrix.python }} ${{ matrix.arch }}
     needs: build-wheels
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # We ship a single abi3 wheel (cp310-abi3) per arch. This matrix
+    # verifies it imports + integration-tests cleanly on every supported
+    # interpreter (3.10 - 3.13), since that's the contract abi3 promises.
     strategy:
       fail-fast: false
       matrix:
         arch: [x86_64]
+        python: ['3.10', '3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
         with:
@@ -176,22 +180,27 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python }}
 
       - uses: actions/download-artifact@v4
         with:
           name: wheels-${{ matrix.arch }}
           path: wheelhouse
 
-      - name: Install wheel in fresh venv and run integration tests
+      - name: Install abi3 wheel in fresh venv and run integration tests
         run: |
           set -euo pipefail
           python -m venv /tmp/whl
           /tmp/whl/bin/pip install --upgrade pip
-          wheel=$(ls wheelhouse/pycoraza-*-cp312-*manylinux*_${{ matrix.arch }}.whl | head -1)
+          wheel=$(ls wheelhouse/pycoraza-*-cp310-abi3-*manylinux*_${{ matrix.arch }}.whl | head -1)
+          if [[ -z "${wheel}" ]]; then
+            echo "no cp310-abi3 wheel found under wheelhouse/" >&2
+            ls -la wheelhouse/ >&2
+            exit 1
+          fi
           /tmp/whl/bin/pip install "$wheel"
           /tmp/whl/bin/pip install 'pytest>=8.2' 'httpx>=0.27' 'flask>=2.3' 'starlette>=0.36' 'fastapi>=0.110'
-          /tmp/whl/bin/python -c "import pycoraza; print('installed:', pycoraza.__name__)"
+          /tmp/whl/bin/python -c "import pycoraza; print('installed:', pycoraza.__name__, pycoraza.__version__)"
           /tmp/whl/bin/pytest tests/integration -x
 
   publish:
