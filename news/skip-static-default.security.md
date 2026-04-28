@@ -1,14 +1,3 @@
-**Behavior change.** `SkipOptions` no longer includes `/static/` in
-its default `prefixes` tuple. Operators frequently mount real dynamic
-handlers under `/static/` (DRF API serializers, signed-URL
-redirectors, file upload endpoints), and bypassing the WAF for the
-entire prefix by default has bitten enough deployments that we now
-require an explicit opt-in. The narrowed default still skips
-`/_next/static/`, `/assets/`, and `/favicon.ico`. Apps that really do
-serve only static files under `/static/` can re-enable the bypass via
-the new `SkipOptions.unsafe_legacy_static_prefix()` helper:
+**Behavior change.** `SkipOptions` no longer includes `/static/` in its default `prefixes` tuple. Operators frequently mount real dynamic handlers under `/static/` (DRF API serializers, signed-URL redirectors, file upload endpoints), and bypassing the WAF for the entire prefix by default has bitten enough deployments that we now require an explicit opt-in. The narrowed default still skips `/_next/static/`, `/assets/`, and `/favicon.ico`. Apps that really do serve only static files under `/static/` can re-enable the bypass by adding it to `prefixes`:
 
-    SkipOptions(
-        prefixes=SkipOptions.default_prefixes()
-                 + SkipOptions.unsafe_legacy_static_prefix(),
-    )
+    SkipOptions(prefixes=SkipOptions.default_prefixes() + ("/static/",))

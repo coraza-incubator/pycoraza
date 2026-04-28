@@ -131,9 +131,7 @@ class SkipOptions:
     upload endpoints). Bypassing the WAF for the entire ``/static/``
     surface by default has bitten enough deployments that we now
     require an explicit opt-in. If your app does serve only static
-    files under ``/static/``, opt in with
-    ``SkipOptions.unsafe_legacy_static_prefix()`` or by adding it to
-    ``prefixes`` yourself.
+    files under ``/static/``, add it to ``prefixes`` yourself.
     """
 
     extensions: tuple[str, ...] = (
@@ -157,25 +155,6 @@ class SkipOptions:
             "/assets/",
             "/favicon.ico",
         )
-
-    @staticmethod
-    def unsafe_legacy_static_prefix() -> tuple[str, ...]:
-        """Opt-in alias for the pre-fix default that bypassed ``/static/``.
-
-        Returns ``("/static/",)`` so callers who really do serve only
-        static assets under that prefix can re-enable the bypass with
-        a name that documents the trade-off:
-
-            skip = SkipOptions(
-                prefixes=SkipOptions.default_prefixes()
-                         + SkipOptions.unsafe_legacy_static_prefix(),
-            )
-
-        ``unsafe_`` is in the name on purpose: a future dynamic route
-        added under ``/static/`` will be silently bypassed by the WAF.
-        """
-        return ("/static/",)
-
 
 # Opt-in preset: common health / readiness / metrics endpoints. Skipping
 # these is a deliberate trade: you lose WAF coverage on paths that are

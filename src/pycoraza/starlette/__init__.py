@@ -62,11 +62,9 @@ class CorazaMiddleware:
     place, an int to install a dedicated `CapacityLimiter`.
 
     `inspect_response=True` enforces phase-3/4 disruptions by buffering
-    the response start + body until both phases have run. For SSE /
-    chunked downloads where buffering is impossible, opt back into the
-    legacy monitor-only path with `inspect_streaming=True` — the rules
-    still run for audit, but a disruptive response-side rule cannot be
-    enforced because headers have already been streamed.
+    the response start + body until both phases have run. SSE / chunked
+    downloads are buffered fully when inspection is enabled — that's
+    the only correct way to enforce a phase-3/4 block in ASGI.
     """
 
     def __init__(
@@ -76,7 +74,6 @@ class CorazaMiddleware:
         waf: WAF,
         on_block: OnBlockAsync | None = None,
         inspect_response: bool = False,
-        inspect_streaming: bool = False,
         on_waf_error: OnWAFErrorArg = OnWAFError.BLOCK,
         skip: SkipArg = None,
         thread_limit: int | None = None,
@@ -86,14 +83,6 @@ class CorazaMiddleware:
         self._waf = waf
         self._on_block = on_block
         self._inspect_response = inspect_response
-        # ``inspect_streaming`` opts back into the legacy monitor-only
-        # path: response-phase rules still run, but a phase-3/4
-        # disruption cannot be enforced because headers are streamed
-        # to the client as the upstream app produces them. Default is
-        # False — we buffer and enforce by default. Flip to True only
-        # when buffering the full response body is impossible (SSE,
-        # large chunked downloads).
-        self._inspect_streaming = inspect_streaming
         self._on_waf_error = _normalize_on_waf_error(on_waf_error)
         self._skip = build_skip_predicate(skip)
         self._extract_client_ip: ClientIPExtractor | None = resolve_extractor(extract_client_ip)
@@ -149,7 +138,6 @@ class CorazaMiddleware:
             self._inspect_response,
             self._waf.mode,
             self._run_in_thread,
-            streaming=self._inspect_streaming,
             logger=self._waf.logger,
         )
         try:
@@ -411,22 +399,15 @@ class _WrappedSend:
     With ``inspect=False`` we forward every ``send()`` immediately —
     same shape as before, no buffering.
 
-    With ``inspect=True`` and ``inspect_streaming=False`` (default) we
-    BUFFER the ``http.response.start`` message and every body chunk
-    until ``more_body=False``. Only then do we run
-    ``process_response_body`` and consult ``tx.interruption()``. If
-    the WAF interrupted AND mode is BLOCK we emit a default block
-    response instead; otherwise we replay the buffered messages.
-    Buffering is the only correct way to enforce a phase-3/4 block
-    in ASGI: once ``http.response.start`` hits the wire, we cannot
-    rescind the status or headers.
-
-    With ``inspect=True`` and ``inspect_streaming=True`` we forward as
-    we go (the legacy monitor-only behavior). Phase-3/4 disruptions
-    cannot be enforced because the headers have already been sent —
-    rules still run for logging/audit. This is opt-in for true
-    streaming responses (SSE, chunked downloads) where buffering the
-    full body is impossible.
+    With ``inspect=True`` we BUFFER the ``http.response.start`` message
+    and every body chunk until ``more_body=False``. Only then do we run
+    ``process_response_body`` and consult ``tx.interruption()``. If the
+    WAF interrupted AND mode is BLOCK we emit a default block response
+    instead; otherwise we replay the buffered messages. Buffering is
+    the only correct way to enforce a phase-3/4 block in ASGI: once
+    ``http.response.start`` hits the wire, we cannot rescind the
+    status or headers. Streaming responses (SSE, chunked downloads)
+    are fully buffered when ``inspect_response=True``.
     """
 
     __slots__ = (
@@ -438,7 +419,6 @@ class _WrappedSend:
         "_real",
         "_response_started",
         "_run",
-        "_streaming",
         "_tx",
     )
 
@@ -449,7 +429,6 @@ class _WrappedSend:
         inspect: bool,
         mode: ProcessMode,
         run: Callable[..., Awaitable[Any]],
-        streaming: bool = False,
         logger: Any = None,
     ) -> None:
         self._real = real
@@ -457,7 +436,6 @@ class _WrappedSend:
         self._inspect = inspect
         self._mode = mode
         self._run = run
-        self._streaming = streaming
         self._blocked = False
         self._response_started = False
         self._buffered_messages: list[Message] = []
@@ -471,41 +449,7 @@ class _WrappedSend:
                 self._response_started = True
             await self._real(message)
             return
-        if self._streaming:
-            await self._send_streaming(message)
-            return
         await self._send_buffered(message)
-
-    async def _send_streaming(self, message: Message) -> None:
-        if message["type"] == "http.response.start":
-            status = int(message.get("status", 200))
-            headers = [
-                (k.decode("latin-1"), v.decode("latin-1"))
-                for k, v in message.get("headers", [])
-            ]
-            try:
-                await self._run(_record_response_headers, self._tx, headers, status)
-            except CorazaError:
-                pass
-            self._response_started = True
-            await self._real(message)
-            return
-        if message["type"] == "http.response.body":
-            chunk = message.get("body", b"") or b""
-            more = bool(message.get("more_body", False))
-            if chunk:
-                try:
-                    await self._run(self._tx.append_response_body, chunk)
-                except CorazaError:
-                    pass
-            if not more:
-                try:
-                    await self._run(self._tx.process_response_body)
-                except CorazaError:
-                    pass
-            await self._real(message)
-            return
-        await self._real(message)
 
     async def _send_buffered(self, message: Message) -> None:
         if message["type"] == "http.response.start":
@@ -576,12 +520,9 @@ def _wrap_send(
     inspect: bool,
     mode: ProcessMode,
     run: Callable[..., Awaitable[Any]],
-    streaming: bool = False,
     logger: Any = None,
 ) -> _WrappedSend:
-    return _WrappedSend(
-        send, tx, inspect, mode, run, streaming=streaming, logger=logger
-    )
+    return _WrappedSend(send, tx, inspect, mode, run, logger=logger)
 
 
 __all__ = ["CorazaMiddleware"]

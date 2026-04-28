@@ -79,11 +79,10 @@ of any of them; the library will not do it for you.
   the adapters now BUFFER the response and ENFORCE a phase-3/4
   block when `mode=BLOCK` — earlier versions ran the rules in
   monitor-only mode and let the upstream response through even when
-  a response-side CRS rule disrupted. The Starlette / FastAPI
-  middleware additionally exposes `inspect_streaming=False`; flip to
-  `True` only for SSE / chunked downloads where buffering is
-  impossible, and accept that disruptive response-side rules cannot
-  be enforced in that mode.
+  a response-side CRS rule disrupted. SSE / chunked-download
+  responses are buffered fully when inspection is enabled, since
+  forwarding any byte before the WAF has scored the body would forfeit
+  the ability to enforce a phase-3/4 block.
 - Adapter error paths never swallow `CorazaError`. If `new_transaction`
   fails, the request is dropped by `_handle_waf_error`. Adapters do
   not silently pass the request through. Flask additionally treats
