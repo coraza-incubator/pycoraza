@@ -17,6 +17,7 @@ and `pycoraza.starlette` — install the appropriate extra.
 from __future__ import annotations
 
 from .abi import Abi, CorazaError
+from .client_ip import DEFAULT_PRIVATE_CIDRS, trusted_proxy
 from .logger import Logger, console_logger, silent_logger
 from .pool import WAFPool, create_waf_pool
 from .skip import SkipArg, SkipPredicate, build_skip_predicate
@@ -40,6 +41,7 @@ from .waf import WAF, create_waf
 __version__ = "0.1.0"
 
 __all__ = [
+    "DEFAULT_PRIVATE_CIDRS",
     "PROBE_METHODS",
     "PROBE_PATHS",
     "WAF",
@@ -66,4 +68,5 @@ __all__ = [
     "create_waf",
     "create_waf_pool",
     "silent_logger",
+    "trusted_proxy",
 ]
