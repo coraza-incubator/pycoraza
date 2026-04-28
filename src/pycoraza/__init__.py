@@ -27,11 +27,13 @@ from .types import (
     Interruption,
     MatchedRule,
     OnWAFError,
+    OnWAFErrorArg,
     ProcessMode,
     RequestInfo,
     ResponseInfo,
     SkipOptions,
     WAFConfig,
+    WAFErrorPolicy,
 )
 from .waf import WAF, create_waf
 
@@ -47,6 +49,7 @@ __all__ = [
     "Logger",
     "MatchedRule",
     "OnWAFError",
+    "OnWAFErrorArg",
     "ProcessMode",
     "RequestInfo",
     "ResponseInfo",
@@ -55,6 +58,7 @@ __all__ = [
     "SkipPredicate",
     "Transaction",
     "WAFConfig",
+    "WAFErrorPolicy",
     "WAFPool",
     "__version__",
     "build_skip_predicate",

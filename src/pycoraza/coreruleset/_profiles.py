@@ -14,6 +14,8 @@ shifts should be visible in source control.
 
 from __future__ import annotations
 
+import re
+import warnings
 from dataclasses import dataclass, field
 from importlib.resources import as_file, files
 from pathlib import Path
@@ -135,6 +137,49 @@ def _whitelist_includes(
     return out
 
 
+_HELPER_EMITTED_IDS: frozenset[int] = frozenset({900000, 900001, 900002, 900003})
+_CRS_RESERVED_RANGE: range = range(900000, 1000000)
+_ID_RE: re.Pattern[str] = re.compile(r"\bid:(\d+)\b")
+
+
+def _check_extra_id_collisions(extra: str) -> None:
+    """Warn when user-supplied SecLang reuses CRS-reserved rule ids.
+
+    `recommended()` and `python_web()` concatenate `extra=...` after the
+    profile's own `SecAction id:90000{0,1,2,3}` directives. SecLang's
+    last-write-wins semantics mean a user `id:900001` silently overrides
+    the inbound anomaly threshold the helper just emitted — and there's
+    no engine-level error to surface that. We do a minimal regex sweep
+    for `id:<N>` tokens and flag collisions on the four ids the helper
+    emits + the broader CRS-reserved range (900000-999999).
+
+    We do NOT parse SecLang structure. A literal `id:900001` inside a
+    comment or string will trip the warning; that's an acceptable false
+    positive given how rarely those constructs occur in practice.
+    """
+    if not extra:
+        return
+    found: list[int] = []
+    for match in _ID_RE.findall(extra):
+        try:
+            rid = int(match)
+        except ValueError:
+            continue
+        if rid in _HELPER_EMITTED_IDS or rid in _CRS_RESERVED_RANGE:
+            found.append(rid)
+    if not found:
+        return
+    unique_sorted = sorted(set(found))
+    warnings.warn(
+        "extra= contains rule id(s) reserved by CRS / pycoraza profile actions: "
+        f"{unique_sorted}. SecLang is last-write-wins, but reusing helper-emitted "
+        "ids (900000-900003) or CRS-reserved range (900000-999999) is almost always "
+        "a bug. Move overrides to ids >= 1000000 or use SecRuleUpdateActionById.",
+        UserWarning,
+        stacklevel=4,
+    )
+
+
 def _build(whitelist: tuple[str, ...], opts: CrsOptions) -> str:
     base = _rules_dir()
     setup = base / "crs-setup.conf.example"
@@ -145,6 +190,7 @@ def _build(whitelist: tuple[str, ...], opts: CrsOptions) -> str:
     lines.extend(_profile_actions(opts))
     lines.extend(_whitelist_includes(whitelist, opts, base))
     if opts.extra:
+        _check_extra_id_collisions(opts.extra)
         lines.append(opts.extra)
     return "\n".join(lines) + "\n"
 

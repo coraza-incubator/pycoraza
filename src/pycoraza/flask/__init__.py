@@ -17,7 +17,7 @@ from urllib.parse import quote
 
 from ..abi import CorazaError
 from ..skip import SkipArg, build_skip_predicate
-from ..types import Interruption, OnWAFError, ProcessMode, RequestInfo
+from ..types import Interruption, OnWAFError, OnWAFErrorArg, ProcessMode, RequestInfo
 
 if TYPE_CHECKING:
     from ..transaction import Transaction
@@ -40,16 +40,14 @@ class CorazaMiddleware:
         waf: WAF,
         on_block: OnBlock | None = None,
         inspect_response: bool = False,
-        on_waf_error: OnWAFError | str = OnWAFError.BLOCK,
+        on_waf_error: OnWAFErrorArg = OnWAFError.BLOCK,
         skip: SkipArg = None,
     ) -> None:
         self._app = app
         self._waf = waf
         self._on_block = on_block or _default_on_block
         self._inspect_response = inspect_response
-        self._on_waf_error = (
-            on_waf_error if isinstance(on_waf_error, OnWAFError) else OnWAFError(on_waf_error)
-        )
+        self._on_waf_error = _normalize_on_waf_error(on_waf_error)
         self._skip = build_skip_predicate(skip)
 
     def __call__(
@@ -60,23 +58,24 @@ class CorazaMiddleware:
         if self._skip(method, path):
             return self._app(environ, start_response)
 
+        request_info = _request_info_from_environ(environ, path)
         try:
             tx = self._waf.new_transaction()
-        except CorazaError:
-            return self._handle_waf_error(environ, start_response)
+        except CorazaError as exc:
+            return self._handle_waf_error(environ, start_response, exc, request_info)
 
         try:
             body = _read_wsgi_body(environ)
-            interrupted = tx.process_request_bundle(
-                _request_info_from_environ(environ, path), body
-            )
+            interrupted = tx.process_request_bundle(request_info, body)
             if interrupted:
                 intr = tx.interruption()
                 if intr is not None and self._waf.mode is ProcessMode.BLOCK:
                     result = _call_on_block(self._on_block, intr, environ, start_response)
                     return _finalize_now(result, tx)
-        except CorazaError:
-            return _finalize_now(self._handle_waf_error(environ, start_response), tx)
+        except CorazaError as exc:
+            return _finalize_now(
+                self._handle_waf_error(environ, start_response, exc, request_info), tx
+            )
 
         response_body = _capture_response(
             self._app,
@@ -89,11 +88,54 @@ class CorazaMiddleware:
         return _finalize_now(response_body, tx)
 
     def _handle_waf_error(
-        self, environ: WSGIEnviron, start_response: WSGIStartResponse
+        self,
+        environ: WSGIEnviron,
+        start_response: WSGIStartResponse,
+        exc: Exception,
+        request_info: RequestInfo,
     ) -> Iterable[bytes]:
-        if self._on_waf_error is OnWAFError.ALLOW:
+        decision = _resolve_waf_error_decision(self._on_waf_error, exc, request_info)
+        if decision is OnWAFError.ALLOW:
             return self._app(environ, start_response)
         return _error_response(start_response, 500, "waf error")
+
+
+def _normalize_on_waf_error(arg: OnWAFErrorArg) -> OnWAFError | Callable[..., Any]:
+    """Coerce the ctor argument into an enum or pass the callable through."""
+    if isinstance(arg, OnWAFError):
+        return arg
+    if isinstance(arg, str):
+        return OnWAFError(arg)
+    if callable(arg):
+        return arg
+    raise TypeError(f"on_waf_error must be 'block', 'allow', or callable, got {type(arg)!r}")
+
+
+def _resolve_waf_error_decision(
+    policy: OnWAFError | Callable[..., Any],
+    exc: Exception,
+    request_info: RequestInfo,
+) -> OnWAFError:
+    """Run the user policy callable (if any) and coerce its result.
+
+    Falls back to BLOCK if the callable raises or returns an
+    unrecognized value — fail-closed posture extends to the policy
+    callable itself.
+    """
+    if isinstance(policy, OnWAFError):
+        return policy
+    try:
+        result = policy(exc, request_info)
+    except Exception:
+        return OnWAFError.BLOCK
+    if isinstance(result, OnWAFError):
+        return result
+    if isinstance(result, str):
+        try:
+            return OnWAFError(result)
+        except ValueError:
+            return OnWAFError.BLOCK
+    return OnWAFError.BLOCK
 
 
 def _default_on_block(

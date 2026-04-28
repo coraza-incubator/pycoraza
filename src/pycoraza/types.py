@@ -6,9 +6,10 @@ against. Everything else in the package is implementation detail.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -87,6 +88,18 @@ class ResponseInfo:
     protocol: str = "HTTP/1.1"
 
 
+# Callable form of `on_waf_error`. Adapters invoke this only for WAF
+# *errors* (CorazaError raised inside the middleware), NOT for
+# rule-driven blocks. Implementers can use it for circuit-breaker
+# / per-error-class policies. Return one of the literal strings
+# `"block"` or `"allow"`; anything else falls back to BLOCK.
+WAFErrorPolicy = Callable[[Exception, "RequestInfo"], Literal["block", "allow"]]
+
+# What an adapter accepts as `on_waf_error`. Mirrors the union signature
+# called out in coraza-node #29.
+OnWAFErrorArg = OnWAFError | Literal["block", "allow"] | WAFErrorPolicy
+
+
 @dataclass(slots=True)
 class SkipOptions:
     """Static-asset bypass knobs shared across every adapter.
@@ -156,9 +169,11 @@ __all__ = [
     "Interruption",
     "MatchedRule",
     "OnWAFError",
+    "OnWAFErrorArg",
     "ProcessMode",
     "RequestInfo",
     "ResponseInfo",
     "SkipOptions",
     "WAFConfig",
+    "WAFErrorPolicy",
 ]

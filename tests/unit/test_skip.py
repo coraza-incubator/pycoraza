@@ -122,3 +122,38 @@ class TestProbePreset:
         assert skip("GET", "/healthz") is True
         assert skip("OPTIONS", "/api/whatever") is True
         assert skip("GET", "/api/sensitive") is False
+
+
+class TestDocstringSemantics:
+    """Coverage for coraza-node #28: documented semantics of build_skip_predicate.
+
+    These tests assert the docstring spells out the load-bearing
+    behaviors a user must understand before relying on the predicate.
+    They guard against silent removals during future refactors.
+    """
+
+    def test_docstring_mentions_case_insensitive(self) -> None:
+        doc = build_skip_predicate.__doc__ or ""
+        assert "case-insensitive" in doc.lower()
+
+    def test_docstring_mentions_compound_extensions(self) -> None:
+        doc = build_skip_predicate.__doc__ or ""
+        # the .tar.gz example is the explicit illustration in the spec
+        assert ".tar.gz" in doc.lower() or "compound" in doc.lower()
+
+    def test_docstring_warns_skip_is_not_security_boundary(self) -> None:
+        doc = build_skip_predicate.__doc__ or ""
+        lower = doc.lower()
+        assert "security" in lower
+        # Either "not a security boundary" or "performance optimization"
+        # phrasing is acceptable — both are present in the spec.
+        assert "performance" in lower or "boundary" in lower
+
+    def test_docstring_documents_path_only_not_query(self) -> None:
+        doc = build_skip_predicate.__doc__ or ""
+        lower = doc.lower()
+        assert "query" in lower or "path only" in lower
+
+    def test_docstring_documents_callable_contract(self) -> None:
+        doc = build_skip_predicate.__doc__ or ""
+        assert "(method" in doc and "path" in doc
