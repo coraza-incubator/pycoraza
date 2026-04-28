@@ -14,6 +14,7 @@ Where `<type>` is one of:
 - `change` — Behavior change (flag, default, config semantics).
 - `fix` — Bug fix with no public API change.
 - `removal` — Removed API or supported behavior.
+- `legal` — Licensing / attribution / NOTICE changes.
 - `misc` — Internal only; no user-visible change.
 
 Example:

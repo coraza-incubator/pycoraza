@@ -1,0 +1,1 @@
+Resolve `pycoraza.__version__` from installed package metadata via `importlib.metadata.version("pycoraza")` instead of a hardcoded literal. Stops `__version__` from drifting out of sync with `pyproject.toml`'s `[project] version` after a release bump. Falls back to `"0.0.0+dev"` when the package is not installed (source-tree dev runs).

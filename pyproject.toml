@@ -13,7 +13,7 @@ version = "0.1.0"
 description = "OWASP Coraza Web Application Firewall for Python — Flask, FastAPI, and Starlette middleware powered by libcoraza."
 requires-python = ">=3.10"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_LICENSES/*"]
 authors = [{ name = "Juan Pablo Tosso", email = "jptosso@gmail.com" }]
 keywords = [
     "waf",
@@ -100,13 +100,25 @@ include = [
     "/examples",
     "/bench",
     "/testing",
+    "/hatch_build.py",
     "/README.md",
     "/LICENSE",
+    "/NOTICE",
+    "/THIRD_PARTY_LICENSES",
     "/CHANGELOG.md",
     "/SECURITY.md",
     "/AGENTS.md",
     "/pyproject.toml",
 ]
+artifacts = [
+    "src/pycoraza/coreruleset/rules/**/*.conf",
+    "src/pycoraza/coreruleset/rules/**/*.conf.example",
+    "src/pycoraza/coreruleset/rules/**/*.data",
+    "src/pycoraza/coreruleset/rules/.crs-tag",
+]
+
+[tool.hatch.build.targets.sdist.hooks.custom]
+path = "hatch_build.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pycoraza"]
@@ -114,14 +126,24 @@ artifacts = [
     "src/pycoraza/_bindings/*.so",
     "src/pycoraza/_bindings/*.pyd",
     "src/pycoraza/coreruleset/rules/**/*.conf",
+    "src/pycoraza/coreruleset/rules/**/*.conf.example",
     "src/pycoraza/coreruleset/rules/**/*.data",
+    "src/pycoraza/coreruleset/rules/.crs-tag",
 ]
 
+# The wheel hook (native/build_ffi.py) ensures CRS rules are present and
+# libcoraza is built (when LIBCORAZA_PREFIX is unset and we're not under
+# cibuildwheel) before compiling the cffi extension.
 [tool.hatch.build.targets.wheel.hooks.custom]
 path = "native/build_ffi.py"
 
 [tool.cibuildwheel]
-build = "cp310-manylinux_x86_64 cp311-manylinux_x86_64 cp312-manylinux_x86_64 cp313-manylinux_x86_64 cp310-manylinux_aarch64 cp311-manylinux_aarch64 cp312-manylinux_aarch64 cp313-manylinux_aarch64"
+# We compile cffi with `py_limited_api=True` (see native/build_ffi.py),
+# so the wheel ABI tag is `abi3` — one wheel built against the floor
+# (cp310) covers cp310, cp311, cp312, cp313. Building cp311/12/13 too
+# would produce four wheels all tagged `cp310-abi3-...` and overwrite
+# each other, leaving whichever the matrix happened to finish last.
+build = "cp310-manylinux_x86_64 cp310-manylinux_aarch64"
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
 before-all = "bash native/scripts/build-libcoraza.sh"
@@ -257,3 +279,8 @@ showcontent = true
 directory = "misc"
 name = "Internal"
 showcontent = false
+
+[[tool.towncrier.type]]
+directory = "legal"
+name = "Legal"
+showcontent = true
