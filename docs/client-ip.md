@@ -74,8 +74,24 @@ extract = trusted_proxy(trusted_cidrs=("10.0.0.0/8", "172.16.0.0/12"))
 app.add_middleware(CorazaMiddleware, waf=waf, extract_client_ip=extract)
 ```
 
-The default `trusted_cidrs` covers RFC1918, loopback, and `fd00::/8`.
-Override it for your cloud LB ranges or VPC subnet.
+`trusted_cidrs` is **required**. There is no safe default: trusting
+every RFC1918 range silently turns any internal-but-not-XFF-sanitizing
+hop into a header-spoofing bypass (an attacker who can land any packet
+on an internal IP can dictate the "client IP" the WAF sees). Pass the
+narrow set of CIDRs that match your actual load balancer / proxy
+fleet.
+
+If you do specifically want the pre-0.x behavior of trusting every
+private network, the constant is exported under its real name:
+
+```python
+from pycoraza.client_ip import DEFAULT_PRIVATE_CIDRS, trusted_proxy
+
+extract = trusted_proxy(trusted_cidrs=DEFAULT_PRIVATE_CIDRS)  # opt-in alias
+```
+
+Calling `trusted_proxy()` without `trusted_cidrs=` now raises
+`ValueError` so the trade-off shows up in code review.
 
 ## Custom callable
 

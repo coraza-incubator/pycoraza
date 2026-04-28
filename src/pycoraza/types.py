@@ -113,6 +113,27 @@ class SkipOptions:
         from pycoraza import SkipOptions, PROBE_PATHS, PROBE_METHODS
         skip = SkipOptions(prefixes=SkipOptions.default_prefixes() + PROBE_PATHS,
                            methods=PROBE_METHODS)
+
+    Default prefixes
+    ----------------
+
+    The default prefix set is deliberately narrow:
+
+      * ``/_next/static/`` — Next.js fingerprinted bundle dir; the
+        framework always serves immutable hashed assets here.
+      * ``/assets/`` — the conventional Vite/Webpack output dir for
+        compiled assets.
+      * ``/favicon.ico`` — exact path, browsers fetch it on every page.
+
+    ``/static/`` is **not** in the default set. It is a common Django /
+    Flask URL prefix that operators frequently mount real *dynamic*
+    handlers under (DRF API serializers, signed-URL redirectors, file
+    upload endpoints). Bypassing the WAF for the entire ``/static/``
+    surface by default has bitten enough deployments that we now
+    require an explicit opt-in. If your app does serve only static
+    files under ``/static/``, opt in with
+    ``SkipOptions.unsafe_legacy_static_prefix()`` or by adding it to
+    ``prefixes`` yourself.
     """
 
     extensions: tuple[str, ...] = (
@@ -122,9 +143,8 @@ class SkipOptions:
         ".pdf", ".zip", ".tar", ".gz",
     )
     prefixes: tuple[str, ...] = (
-        "/static/",
-        "/assets/",
         "/_next/static/",
+        "/assets/",
         "/favicon.ico",
     )
     extra_paths: tuple[str, ...] = field(default_factory=tuple)
@@ -133,11 +153,28 @@ class SkipOptions:
     @staticmethod
     def default_prefixes() -> tuple[str, ...]:
         return (
-            "/static/",
-            "/assets/",
             "/_next/static/",
+            "/assets/",
             "/favicon.ico",
         )
+
+    @staticmethod
+    def unsafe_legacy_static_prefix() -> tuple[str, ...]:
+        """Opt-in alias for the pre-fix default that bypassed ``/static/``.
+
+        Returns ``("/static/",)`` so callers who really do serve only
+        static assets under that prefix can re-enable the bypass with
+        a name that documents the trade-off:
+
+            skip = SkipOptions(
+                prefixes=SkipOptions.default_prefixes()
+                         + SkipOptions.unsafe_legacy_static_prefix(),
+            )
+
+        ``unsafe_`` is in the name on purpose: a future dynamic route
+        added under ``/static/`` will be silently bypassed by the WAF.
+        """
+        return ("/static/",)
 
 
 # Opt-in preset: common health / readiness / metrics endpoints. Skipping

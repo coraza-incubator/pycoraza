@@ -166,10 +166,20 @@ def _split_xff(value: str) -> list[str]:
     return out
 
 
+_TRUSTED_CIDRS_REQUIRED_MSG = (
+    "trusted_proxy() requires `trusted_cidrs=`; an extractor that trusts "
+    "every hop is a header-spoofing footgun. Pass the CIDR(s) of your "
+    "load balancer / reverse proxy explicitly. To restore the legacy "
+    "behavior of trusting RFC1918 + loopback, pass "
+    "`trusted_cidrs=DEFAULT_PRIVATE_CIDRS` from `pycoraza.client_ip`. "
+    "See docs/client-ip.md."
+)
+
+
 def trusted_proxy(
     *,
     header: str = "X-Forwarded-For",
-    trusted_cidrs: Sequence[str] = DEFAULT_PRIVATE_CIDRS,
+    trusted_cidrs: Sequence[str] | None = None,
 ) -> ClientIPExtractor:
     """Build a real-client-IP extractor for trusted-proxy chains.
 
@@ -187,9 +197,16 @@ def trusted_proxy(
         hop, so the wire-level address is the most informative
         identifier we have).
 
-    The default ``trusted_cidrs`` set covers RFC1918, loopback, and
-    fd00::/8. Override it for cloud LB ranges or for partial trust.
+    ``trusted_cidrs`` is required. There is no safe default — the
+    previous "trust all RFC1918" default produced a header-spoofing
+    bypass for any cluster routing public traffic through an internal
+    load balancer that did NOT itself sanitize ``X-Forwarded-For``. If
+    you really want the legacy behavior, pass
+    ``trusted_cidrs=DEFAULT_PRIVATE_CIDRS`` explicitly so the choice
+    is visible in code review.
     """
+    if trusted_cidrs is None:
+        raise ValueError(_TRUSTED_CIDRS_REQUIRED_MSG)
     networks = _parse_networks(trusted_cidrs)
 
     def extract(request_or_scope: Any) -> str:

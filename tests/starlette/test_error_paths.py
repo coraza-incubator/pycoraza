@@ -104,13 +104,34 @@ class TestSendWrapperEdges:
 
 
 class TestOnWAFErrorAllow:
-    def test_allow_not_possible_post_receive(self, fake_abi: FakeLib) -> None:
+    def test_allow_replays_buffered_body_to_downstream(self, fake_abi: FakeLib) -> None:
+        # The receive channel was drained into a buffer before the WAF
+        # ran. When ``on_waf_error="allow"`` resolves we replay the
+        # buffered body to the downstream app via _replay_receive so
+        # allow-on-error is now actually fail-open instead of erroring
+        # with "cannot allow-fall-through after middleware consumed
+        # receive".
         fake_abi.raise_on_new_transaction = True
-        # Build with on_waf_error="allow" — middleware should raise
-        # CorazaError because it already consumed the receive stream
-        # before hitting the WAF error. Starlette surfaces that as 500
-        # via its exception middleware.
         app = _build(fake_abi, on_waf_error=OnWAFError.ALLOW)
-        with TestClient(app, raise_server_exceptions=False) as c:
+        with TestClient(app) as c:
             rv = c.get("/")
-        assert rv.status_code == 500
+        assert rv.status_code == 200
+        assert rv.text == "ok"
+
+    def test_allow_replays_post_body(self, fake_abi: FakeLib) -> None:
+        async def echo(request):
+            data = await request.body()
+            return PlainTextResponse(data.decode() or "empty")
+
+        fake_abi.raise_on_new_transaction = True
+        waf = create_waf(WAFConfig(rules="SecRuleEngine On\n", mode=ProcessMode.BLOCK))
+        app = Starlette(
+            routes=[Route("/echo", echo, methods=["POST"])],
+            middleware=[
+                Middleware(CorazaMiddleware, waf=waf, on_waf_error=OnWAFError.ALLOW),
+            ],
+        )
+        with TestClient(app) as c:
+            rv = c.post("/echo", content=b"replayed-body")
+        assert rv.status_code == 200
+        assert rv.text == "replayed-body"

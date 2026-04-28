@@ -177,7 +177,7 @@ class TestHeaderLookup:
 
 class TestTrustedProxyDefault:
     def test_returns_first_untrusted_from_right(self) -> None:
-        extract = trusted_proxy()
+        extract = trusted_proxy(trusted_cidrs=DEFAULT_PRIVATE_CIDRS)
         env = _wsgi_environ(
             remote_addr="10.0.0.1",
             **{"X-Forwarded-For": "203.0.113.9, 10.0.0.7, 10.0.0.1"},
@@ -185,7 +185,7 @@ class TestTrustedProxyDefault:
         assert extract(env) == "203.0.113.9"
 
     def test_skips_only_trailing_trusted(self) -> None:
-        extract = trusted_proxy()
+        extract = trusted_proxy(trusted_cidrs=DEFAULT_PRIVATE_CIDRS)
         env = _wsgi_environ(
             remote_addr="10.0.0.1",
             **{"X-Forwarded-For": "203.0.113.9, 198.51.100.5, 10.0.0.1"},
@@ -194,7 +194,7 @@ class TestTrustedProxyDefault:
         assert extract(env) == "198.51.100.5"
 
     def test_all_trusted_falls_back_to_remote_addr(self) -> None:
-        extract = trusted_proxy()
+        extract = trusted_proxy(trusted_cidrs=DEFAULT_PRIVATE_CIDRS)
         env = _wsgi_environ(
             remote_addr="10.0.0.1",
             **{"X-Forwarded-For": "10.0.0.7, 10.0.0.8, 192.168.1.1"},
@@ -202,17 +202,17 @@ class TestTrustedProxyDefault:
         assert extract(env) == "10.0.0.1"
 
     def test_missing_xff_falls_back_to_remote_addr(self) -> None:
-        extract = trusted_proxy()
+        extract = trusted_proxy(trusted_cidrs=DEFAULT_PRIVATE_CIDRS)
         env = _wsgi_environ(remote_addr="10.0.0.1")
         assert extract(env) == "10.0.0.1"
 
     def test_empty_xff_falls_back_to_remote_addr(self) -> None:
-        extract = trusted_proxy()
+        extract = trusted_proxy(trusted_cidrs=DEFAULT_PRIVATE_CIDRS)
         env = _wsgi_environ(remote_addr="10.0.0.1", **{"X-Forwarded-For": "   ,  "})
         assert extract(env) == "10.0.0.1"
 
     def test_invalid_entries_skipped(self) -> None:
-        extract = trusted_proxy()
+        extract = trusted_proxy(trusted_cidrs=DEFAULT_PRIVATE_CIDRS)
         env = _wsgi_environ(
             remote_addr="10.0.0.1",
             **{"X-Forwarded-For": "garbage, 203.0.113.9, 10.0.0.1"},
@@ -220,7 +220,7 @@ class TestTrustedProxyDefault:
         assert extract(env) == "203.0.113.9"
 
     def test_works_with_asgi_scope(self) -> None:
-        extract = trusted_proxy()
+        extract = trusted_proxy(trusted_cidrs=DEFAULT_PRIVATE_CIDRS)
         scope = _asgi_scope(
             client_ip="10.0.0.1",
             **{"X-Forwarded-For": "203.0.113.9, 10.0.0.1"},
@@ -230,7 +230,10 @@ class TestTrustedProxyDefault:
 
 class TestTrustedProxyCustom:
     def test_custom_header(self) -> None:
-        extract = trusted_proxy(header="X-Real-IP-Chain")
+        extract = trusted_proxy(
+            header="X-Real-IP-Chain",
+            trusted_cidrs=DEFAULT_PRIVATE_CIDRS,
+        )
         env = _wsgi_environ(
             remote_addr="10.0.0.1",
             **{"X-Real-IP-Chain": "203.0.113.9, 10.0.0.5"},
@@ -259,12 +262,12 @@ class TestTrustedProxyCustom:
 
 class TestIPv6:
     def test_ipv6_remote_addr_passthrough(self) -> None:
-        extract = trusted_proxy()
+        extract = trusted_proxy(trusted_cidrs=DEFAULT_PRIVATE_CIDRS)
         env = _wsgi_environ(remote_addr="2001:db8::1")
         assert extract(env) == "2001:db8::1"
 
     def test_ipv6_in_xff_chain(self) -> None:
-        extract = trusted_proxy()
+        extract = trusted_proxy(trusted_cidrs=DEFAULT_PRIVATE_CIDRS)
         env = _wsgi_environ(
             remote_addr="::1",
             **{"X-Forwarded-For": "2001:db8::5, ::1"},
@@ -272,7 +275,7 @@ class TestIPv6:
         assert extract(env) == "2001:db8::5"
 
     def test_ipv6_loopback_treated_as_trusted(self) -> None:
-        extract = trusted_proxy()
+        extract = trusted_proxy(trusted_cidrs=DEFAULT_PRIVATE_CIDRS)
         env = _wsgi_environ(
             remote_addr="::1",
             **{"X-Forwarded-For": "2001:db8::5, ::1, ::1"},
@@ -280,7 +283,7 @@ class TestIPv6:
         assert extract(env) == "2001:db8::5"
 
     def test_ipv6_only_trusted_chain_falls_back(self) -> None:
-        extract = trusted_proxy()
+        extract = trusted_proxy(trusted_cidrs=DEFAULT_PRIVATE_CIDRS)
         env = _wsgi_environ(
             remote_addr="::1",
             **{"X-Forwarded-For": "::1, fd00::1"},
@@ -420,12 +423,12 @@ class TestResolveExtractor:
 
 class TestRemoteAddrFallback:
     def test_no_remote_addr_no_xff(self) -> None:
-        extract = trusted_proxy()
+        extract = trusted_proxy(trusted_cidrs=DEFAULT_PRIVATE_CIDRS)
         env = {"REQUEST_METHOD": "GET"}
         assert extract(env) == ""
 
     def test_asgi_no_client_field(self) -> None:
-        extract = trusted_proxy()
+        extract = trusted_proxy(trusted_cidrs=DEFAULT_PRIVATE_CIDRS)
         scope = {"type": "http", "headers": []}
         assert extract(scope) == ""
 
@@ -455,9 +458,29 @@ class TestAsgiHeaderEdge:
 
 class TestTrustedProxyInvalidOnlyChain:
     def test_only_invalid_entries_falls_back(self) -> None:
-        extract = trusted_proxy()
+        extract = trusted_proxy(trusted_cidrs=DEFAULT_PRIVATE_CIDRS)
         env = _wsgi_environ(
             remote_addr="10.0.0.1",
             **{"X-Forwarded-For": "not-an-ip, also-bad"},
         )
         assert extract(env) == "10.0.0.1"
+
+
+class TestTrustedProxyRequiresCIDRs:
+    def test_call_without_trusted_cidrs_raises(self) -> None:
+        with pytest.raises(ValueError, match="trusted_cidrs"):
+            trusted_proxy()
+
+    def test_error_message_mentions_default_alias(self) -> None:
+        with pytest.raises(ValueError) as exc:
+            trusted_proxy()
+        assert "DEFAULT_PRIVATE_CIDRS" in str(exc.value)
+        assert "docs" in str(exc.value).lower()
+
+    def test_explicit_default_private_cidrs_works(self) -> None:
+        extract = trusted_proxy(trusted_cidrs=DEFAULT_PRIVATE_CIDRS)
+        env = _wsgi_environ(
+            remote_addr="10.0.0.1",
+            **{"X-Forwarded-For": "203.0.113.9, 10.0.0.7"},
+        )
+        assert extract(env) == "203.0.113.9"

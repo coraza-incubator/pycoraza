@@ -75,10 +75,23 @@ of any of them; the library will not do it for you.
 - `inspect_response=False` — phase 3+4 (response headers, response
   body) are skipped unless you enable them. This is a throughput
   choice, not a security-correctness choice. Enable when you have
-  rules that need the response body.
+  rules that need the response body. With `inspect_response=True`
+  the adapters now BUFFER the response and ENFORCE a phase-3/4
+  block when `mode=BLOCK` — earlier versions ran the rules in
+  monitor-only mode and let the upstream response through even when
+  a response-side CRS rule disrupted. The Starlette / FastAPI
+  middleware additionally exposes `inspect_streaming=False`; flip to
+  `True` only for SSE / chunked downloads where buffering is
+  impossible, and accept that disruptive response-side rules cannot
+  be enforced in that mode.
 - Adapter error paths never swallow `CorazaError`. If `new_transaction`
   fails, the request is dropped by `_handle_waf_error`. Adapters do
-  not silently pass the request through.
+  not silently pass the request through. Flask additionally treats
+  any exception from the WSGI body read (slow / broken client) as a
+  WAF error so `on_waf_error` policy applies and the transaction is
+  closed deterministically. Starlette / FastAPI's
+  `on_waf_error="allow"` resolves correctly: the buffered request
+  body is replayed to the downstream app via the receive channel.
 
 ## Go-runtime caveats
 

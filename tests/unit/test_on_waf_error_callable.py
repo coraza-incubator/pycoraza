@@ -176,22 +176,22 @@ class TestStarletteCallable:
         assert isinstance(seen[0][1], RequestInfo)
         assert seen[0][1].method == "GET"
 
-    def test_callable_allow_post_receive_surfaces_error(
+    def test_callable_allow_replays_buffered_body(
         self, fake_abi: FakeLib
     ) -> None:
-        # Starlette has already drained `receive` by the time the WAF
-        # is invoked, so an `allow` decision cannot fall through. The
-        # adapter raises CorazaError; Starlette's exception middleware
-        # turns it into a 500. We just verify the response is non-2xx.
+        # Starlette has already drained `receive` into a buffer by the
+        # time the WAF is invoked. An ``allow`` decision now replays
+        # the buffer through the downstream app so fail-open behaves
+        # like fail-open everywhere else.
         fake_abi.raise_on_new_transaction = True
 
         def policy(_exc: Exception, _req: RequestInfo) -> str:
             return "allow"
 
         app = _build_starlette(fake_abi, on_waf_error=policy)
-        with TestClient(app, raise_server_exceptions=False) as c:
+        with TestClient(app) as c:
             rv = c.get("/")
-        assert rv.status_code >= 500
+        assert rv.status_code == 200
 
     def test_callable_that_raises_falls_back_to_block(
         self, fake_abi: FakeLib

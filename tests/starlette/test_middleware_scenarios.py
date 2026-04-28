@@ -25,6 +25,7 @@ def _build(
     *,
     mode: ProcessMode = ProcessMode.BLOCK,
     inspect_response: bool = False,
+    inspect_streaming: bool = False,
     skip=None,
     on_waf_error: str = "block",
     on_block=None,
@@ -55,6 +56,7 @@ def _build(
             CorazaMiddleware,
             waf=waf,
             inspect_response=inspect_response,
+            inspect_streaming=inspect_streaming,
             skip=skip,
             on_waf_error=on_waf_error,
             on_block=on_block,
@@ -153,16 +155,17 @@ class TestWAFErrors:
 
 class TestResponseInspection:
     def test_response_body_rule_interrupts_in_header_phase(self, fake_abi: FakeLib) -> None:
-        # Response-body interruption mid-stream would send a second
-        # http.response.start, which ASGI forbids. We trigger via the
-        # status code so the WAF intercepts during header processing.
+        # Phase-3 disruption is now ENFORCED in the default
+        # (buffered) inspect mode: the wrapped send buffers the
+        # response.start + body, and on detecting an interruption it
+        # emits a block response instead. Earlier versions ran the
+        # rules monitor-only and let the upstream 200 through.
         fake_abi.trigger_response_headers_status = 200
         app = _build(fake_abi, mode=ProcessMode.BLOCK, inspect_response=True)
         with TestClient(app) as c:
             rv = c.get("/")
-        # The WAF flagged the response at the header phase; the test
-        # app had already committed 200 so we verify the WAF saw it.
-        assert rv.status_code == 200
+        assert rv.status_code == 403
+        assert b"blocked" in rv.content
         kinds = [c[0] for c in fake_abi.call_log]
         assert "process_response_headers" in kinds
 
@@ -173,6 +176,32 @@ class TestResponseInspection:
         assert rv.status_code == 200
         assert any(c[0] == "process_response_headers" for c in fake_abi.call_log)
         assert any(c[0] == "append_response_body" for c in fake_abi.call_log)
+
+    def test_inspect_response_body_block_enforced(self, fake_abi: FakeLib) -> None:
+        # Trigger an interruption from the response body phase. The
+        # buffered wrapper must replace the upstream response with a
+        # 403 block. inspect_response=True default is buffered.
+        fake_abi.trigger_response_body_contains = b"ok"
+        app = _build(fake_abi, mode=ProcessMode.BLOCK, inspect_response=True)
+        with TestClient(app) as c:
+            rv = c.get("/")
+        assert rv.status_code == 403
+        assert b"blocked" in rv.content
+
+    def test_inspect_streaming_back_to_monitor_only(self, fake_abi: FakeLib) -> None:
+        # ``inspect_streaming=True`` opts back into the legacy path:
+        # rules still run for audit but the upstream response is
+        # forwarded as-is, even on disruption. Documented constraint.
+        fake_abi.trigger_response_headers_status = 200
+        app = _build(
+            fake_abi,
+            mode=ProcessMode.BLOCK,
+            inspect_response=True,
+            inspect_streaming=True,
+        )
+        with TestClient(app) as c:
+            rv = c.get("/")
+        assert rv.status_code == 200
 
 
 class TestBodyHandling:

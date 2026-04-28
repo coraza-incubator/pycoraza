@@ -213,6 +213,30 @@ class TestInspectResponse:
         kinds = [c[0] for c in fake_abi.call_log]
         assert "process_response_headers" not in kinds
 
+    def test_inspect_response_body_block_enforced(self, fake_abi: FakeLib) -> None:
+        # B3: response-side rule fires; with mode=BLOCK the middleware
+        # must swap in a block response instead of returning the
+        # upstream 200. Earlier versions ran the rule and let the 200
+        # through — that was monitor-only enforcement.
+        fake_abi.trigger_response_body_contains = b"ok"
+        settings.PYCORAZA_WAF = _mk_waf(mode=ProcessMode.BLOCK)
+        settings.PYCORAZA_INSPECT_RESPONSE = True
+        mw = CorazaMiddleware(_plain_response)
+        rv = mw(RequestFactory().get("/"))
+        assert rv.status_code == 403
+        payload = json.loads(rv.content)
+        assert payload["error"] == "blocked"
+
+    def test_inspect_response_detect_mode_does_not_enforce(
+        self, fake_abi: FakeLib
+    ) -> None:
+        fake_abi.trigger_response_body_contains = b"ok"
+        settings.PYCORAZA_WAF = _mk_waf(mode=ProcessMode.DETECT)
+        settings.PYCORAZA_INSPECT_RESPONSE = True
+        mw = CorazaMiddleware(_plain_response)
+        rv = mw(RequestFactory().get("/"))
+        assert rv.status_code == 200
+
 
 class TestDownstreamException:
     def test_downstream_raise_still_finalizes(self, fake_abi: FakeLib) -> None:

@@ -73,7 +73,17 @@ class CorazaMiddleware:
             return self._handle_waf_error(environ, start_response, exc, request_info)
 
         try:
-            body = _read_wsgi_body(environ)
+            try:
+                body = _read_wsgi_body(environ)
+            except Exception as exc:
+                # Slow / broken clients can drop mid-read with TimeoutError,
+                # ConnectionResetError, or any framework-specific stream
+                # exception. Treat as a WAF error so on_waf_error policy
+                # decides — and crucially close the transaction we just
+                # opened so it does not leak.
+                return _finalize_now(
+                    self._handle_waf_error(environ, start_response, exc, request_info), tx
+                )
             interrupted = tx.process_request_bundle(request_info, body)
             if interrupted:
                 intr = tx.interruption()
@@ -359,7 +369,19 @@ def _iter_wsgi_headers_fallback(environ: WSGIEnviron) -> Iterable[tuple[str, str
 
 
 class _CaptureStartResponse:
-    __slots__ = ("_inspect", "_real", "_tx", "headers", "status")
+    """Buffer ``start_response`` so an inspect-response block can replace it.
+
+    When ``inspect=True`` we cannot let the downstream ``start_response``
+    fire immediately: a phase-3/4 interruption must be able to replace
+    the headers and status with a block response. WSGI is synchronous
+    and the headers haven't hit the wire yet, so we hold them and let
+    ``_capture_response`` decide once the response phases have run.
+
+    With ``inspect=False`` we pass through to the real ``start_response``
+    immediately — same behavior as before, no buffering overhead.
+    """
+
+    __slots__ = ("_inspect", "_real", "_tx", "exc_info", "headers", "status")
 
     def __init__(self, real: WSGIStartResponse, tx: Transaction, inspect: bool) -> None:
         self._real = real
@@ -367,6 +389,7 @@ class _CaptureStartResponse:
         self._inspect = inspect
         self.status: str = ""
         self.headers: list[tuple[str, str]] = []
+        self.exc_info: object | None = None
 
     def __call__(
         self,
@@ -376,6 +399,7 @@ class _CaptureStartResponse:
     ) -> Callable[[bytes], Any]:
         self.status = status
         self.headers = list(response_headers)
+        self.exc_info = exc_info
         if self._inspect:
             status_code = int(status.split(" ", 1)[0] or "200")
             try:
@@ -383,9 +407,18 @@ class _CaptureStartResponse:
                 self._tx.process_response_headers(status_code)
             except CorazaError:
                 pass
+            # Defer the real start_response. _capture_response fires it
+            # after evaluating the response body — possibly replacing
+            # the headers with a block response.
+            return _noop_write
         if exc_info is not None:
             return self._real(status, response_headers, exc_info)
         return self._real(status, response_headers)
+
+
+def _noop_write(_data: bytes) -> Any:
+    """No-op write callable returned from a buffered ``start_response``."""
+    return None
 
 
 def _capture_response(
@@ -408,14 +441,29 @@ def _capture_response(
             tx.append_response_body(chunk)
         except CorazaError:
             pass
+
     try:
-        if tx.process_response_body() and mode is ProcessMode.BLOCK:
-            intr = tx.interruption()
-            if intr is not None:
-                _log_block(logger, intr, tx.matched_rules())
-                return _default_on_block(intr, environ, start_response)
+        tx.process_response_body()
     except CorazaError:
         pass
+
+    # process_response_headers / process_response_body may each have
+    # flagged an interruption. interruption() returns the cached one
+    # if any phase set it; consult once.
+    if mode is ProcessMode.BLOCK:
+        try:
+            intr = tx.interruption()
+        except CorazaError:
+            intr = None
+        if intr is not None:
+            _log_block(logger, intr, tx.matched_rules())
+            return _default_on_block(intr, environ, start_response)
+
+    if capture.status:
+        if capture.exc_info is not None:
+            start_response(capture.status, capture.headers, capture.exc_info)
+        else:
+            start_response(capture.status, capture.headers)
     return buf
 
 
