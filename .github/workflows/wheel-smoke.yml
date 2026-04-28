@@ -1,0 +1,204 @@
+name: Wheel smoke (published-path)
+
+# CI today exercises the editable-install path (`pip install -e ".[dev]"`).
+# That never tests what real users actually get from `pip install pycoraza`.
+# This workflow closes that gap: build a fresh wheel + sdist, install the
+# wheel into a clean consumer venv on a SECOND job (no inherited workspace
+# state), boot each adapter, and run a 200/403/403 probe matrix across
+# benign/SQLi/XSS shapes — same idea coraza-node tracks in their issue #21.
+#
+# Trigger pattern matches ci.yml: every PR + every push to main/develop,
+# plus on-demand via workflow_dispatch.
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: wheel-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-libcoraza:
+    name: Build libcoraza (manylinux_2_28)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Same image cibuildwheel uses at release time — keeps the symbol
+    # surface (notably getrandom) identical between this gate and the
+    # wheels we ship.
+    container:
+      image: quay.io/pypa/manylinux_2_28_x86_64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Cache built libcoraza
+        id: libcoraza-cache
+        uses: actions/cache@v4
+        with:
+          path: build/libcoraza
+          # Same key as ci.yml so cache entries are shared.
+          key: libcoraza-${{ runner.os }}-x86_64-${{ hashFiles('native/version.txt', 'native/coraza_cdef.h', 'native/scripts/build-libcoraza.sh') }}
+          restore-keys: ''
+
+      - name: Build libcoraza
+        if: steps.libcoraza-cache.outputs.cache-hit != 'true'
+        env:
+          LIBCORAZA_PREFIX: ${{ github.workspace }}/build/libcoraza
+        run: bash native/scripts/build-libcoraza.sh
+
+      - name: Upload libcoraza artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libcoraza-x86_64-wheel-smoke
+          path: build/libcoraza/
+          retention-days: 3
+          if-no-files-found: error
+
+  build-wheel:
+    name: Build sdist + wheel
+    needs: build-libcoraza
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: libcoraza-x86_64-wheel-smoke
+          path: build/libcoraza
+
+      - name: Export libcoraza env (for the cffi link step)
+        run: |
+          set -euo pipefail
+          echo "LIBCORAZA_PREFIX=${GITHUB_WORKSPACE}/build/libcoraza" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${GITHUB_WORKSPACE}/build/libcoraza/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Fetch OWASP CRS rules
+        # The wheel's `pycoraza.coreruleset` package globs in the rules,
+        # so they must be present on disk at build time. This mirrors
+        # the step in ci.yml.
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source native/version.txt
+          TMP=$(mktemp -d)
+          curl -fsSL "https://github.com/coreruleset/coreruleset/archive/refs/tags/${CRS_TAG}.tar.gz" \
+            | tar -C "$TMP" -xzf -
+          SRC="$TMP/coreruleset-${CRS_TAG#v}"
+          DEST=src/pycoraza/coreruleset/rules
+          mkdir -p "$DEST"
+          cp -r "$SRC/rules" "$DEST/rules"
+          cp "$SRC/crs-setup.conf.example" "$DEST/crs-setup.conf.example"
+          echo "${CRS_TAG}" > "$DEST/.crs-tag"
+
+      - name: Build sdist + wheel (no cache — fresh build every run)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+          python -m build --sdist --wheel --outdir dist/
+
+      - name: List built artifacts
+        run: |
+          set -euo pipefail
+          ls -l dist/
+          # The wheel and sdist must both exist or the smoke job has
+          # nothing to test.
+          test -n "$(ls dist/*.whl 2>/dev/null)"
+          test -n "$(ls dist/*.tar.gz 2>/dev/null)"
+
+      - name: Upload dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: pycoraza-dist
+          path: dist/*
+          retention-days: 3
+          if-no-files-found: error
+
+  smoke:
+    name: Smoke wheel (fresh consumer venv)
+    needs: [build-libcoraza, build-wheel]
+    # Fresh ubuntu-latest job, no inherited workspace state. We pull
+    # ONLY the wheel + libcoraza from artifact downloads — that's the
+    # consumer-side reality.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        # The example apps live in the repo; we re-use them rather than
+        # duplicating their contract.
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download wheel + sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: pycoraza-dist
+          path: dist
+
+      - name: Download libcoraza
+        # The wheel was linked against libcoraza, but the smoke wheel does
+        # NOT bundle it (no auditwheel-repair step yet). The cffi loader
+        # therefore needs libcoraza.so on LD_LIBRARY_PATH at runtime.
+        uses: actions/download-artifact@v4
+        with:
+          name: libcoraza-x86_64-wheel-smoke
+          path: build/libcoraza
+
+      - name: Resolve wheel path
+        id: wheel
+        run: |
+          set -euo pipefail
+          WHEEL=$(ls dist/pycoraza-*.whl | head -n 1)
+          if [[ -z "${WHEEL}" ]]; then
+            echo "no wheel found under dist/" >&2
+            exit 1
+          fi
+          echo "path=${WHEEL}" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "${WHEEL}")" >> "$GITHUB_OUTPUT"
+          echo "Smoke target wheel: ${WHEEL}"
+
+      - name: Run wheel smoke
+        env:
+          LIBCORAZA_PREFIX: ${{ github.workspace }}/build/libcoraza
+          PYTHON: python3
+          SMOKE_VENV: /tmp/pycoraza-smoke-venv
+          ADAPTERS: flask fastapi starlette
+        run: |
+          # Delegated to the helper so developers run the same logic
+          # locally. Any fix made there is the fix CI ships.
+          bash bench/wheel_smoke.sh "${{ steps.wheel.outputs.path }}"
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-smoke-server-logs
+          path: |
+            /tmp/pycoraza-smoke-*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Failure summary
+        if: failure()
+        run: |
+          echo "::error::Wheel smoke FAILED for ${{ steps.wheel.outputs.name }}"
+          echo "Build artifact: ${{ steps.wheel.outputs.name }} (download via the 'pycoraza-dist' artifact on this run)."
