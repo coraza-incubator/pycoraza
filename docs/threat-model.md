@@ -65,7 +65,9 @@ of any of them; the library will not do it for you.
 - `on_waf_error="block"` — if the adapter cannot instantiate a
   transaction or a WAF call raises `CorazaError`, the request returns
   a 500 response. Flip to `"allow"` only when you've weighed
-  availability over security and written it down.
+  availability over security and written it down. You can also pass a
+  callable for circuit-breaker behavior — see "Circuit-breaker policy"
+  below.
 - `mode=ProcessMode.DETECT` — the default out of `WAFConfig`. You
   must explicitly set `ProcessMode.BLOCK` to enforce rules. This is
   intentional: a wrong rule in detect mode logs; a wrong rule in block
@@ -183,6 +185,68 @@ Use this to validate your deployment before turning block mode on.
 Run `pytest tests/signals tests/callbacks` after any change that
 touches adapter error handling. Those suites are the enforcement
 mechanism for this checklist.
+
+## Circuit-breaker policy for `on_waf_error`
+
+`on_waf_error` accepts the literal strings `"block"` / `"allow"` (or
+the `pycoraza.OnWAFError` enum), AND a callable of type
+`pycoraza.WAFErrorPolicy`. The callable receives the raised exception
+and the `RequestInfo` and must return the literal string `"block"` or
+`"allow"`. Adapters invoke it ONLY on WAF errors — `CorazaError`
+raised inside the middleware — never on rule-driven blocks.
+
+A typical use: open the circuit (allow traffic) after a sustained
+spike in WAF errors so an upstream blip doesn't take the service
+offline, while still failing closed on the first few errors.
+
+```python
+class FailOnceThenAllow:
+    def __init__(self) -> None:
+        self.fail_count = 0
+
+    def __call__(self, exc, req):
+        self.fail_count += 1
+        if self.fail_count > 5:  # persistent failures -> open the circuit
+            return "allow"
+        return "block"
+
+CorazaMiddleware(app, waf=waf, on_waf_error=FailOnceThenAllow())
+```
+
+If the callable itself raises, or returns anything other than
+`"block"` / `"allow"`, the adapter falls back to `OnWAFError.BLOCK` —
+fail-closed posture extends to the policy callable. This is
+deliberate: a buggy policy must not silently turn into a bypass.
+
+## Skip predicate as a config knob
+
+`pycoraza.skip.build_skip_predicate` is a **performance optimization,
+not a security boundary.** Both the default static-asset bypass
+(`/static/`, `/assets/`, `*.png`, `*.css`, ...) and any user-supplied
+`SkipOptions` or callable cause Coraza to never see the request. There
+is no WAF evaluation, no logging, no auditing. From the WAF's point of
+view those requests do not exist.
+
+The fail-closed default (`on_waf_error="block"`) only catches WAF
+*errors* — `CorazaError` raised inside the middleware. It does not
+second-guess a user-configured bypass. If your predicate returns
+`True` on `path.startswith("/api")`, you have disabled the WAF for the
+entire API surface, and pycoraza will obediently do exactly that.
+
+Match semantics worth knowing about (full list in
+`build_skip_predicate.__doc__`):
+
+- The predicate sees the URL **path** only, never the query string.
+- Extension matching is **case-insensitive** (both sides lowered).
+- Compound extensions like `.tar.gz` are NOT a single token. Only the
+  last `.<ext>` segment matches; the default tuple lists both `.tar`
+  and `.gz` to cover the common case. To skip a specific file like
+  `/dump.tar.gz`, add it to `SkipOptions.extra_paths` instead.
+
+Audit your skip configuration against your routing table at every
+release. A new dynamic handler mounted under `/static/` will be
+silently bypassed; pycoraza cannot warn you about a request it never
+saw.
 
 ## Known caveats
 

@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..abi import CorazaError
 from ..skip import SkipArg, build_skip_predicate
-from ..types import Interruption, OnWAFError, ProcessMode, RequestInfo
+from ..types import Interruption, OnWAFError, OnWAFErrorArg, ProcessMode, RequestInfo
 
 if TYPE_CHECKING:
     from ..transaction import Transaction
@@ -67,7 +67,7 @@ class CorazaMiddleware:
         waf: WAF,
         on_block: OnBlockAsync | None = None,
         inspect_response: bool = False,
-        on_waf_error: OnWAFError | str = OnWAFError.BLOCK,
+        on_waf_error: OnWAFErrorArg = OnWAFError.BLOCK,
         skip: SkipArg = None,
         thread_limit: int | None = None,
     ) -> None:
@@ -75,9 +75,7 @@ class CorazaMiddleware:
         self._waf = waf
         self._on_block = on_block
         self._inspect_response = inspect_response
-        self._on_waf_error = (
-            on_waf_error if isinstance(on_waf_error, OnWAFError) else OnWAFError(on_waf_error)
-        )
+        self._on_waf_error = _normalize_on_waf_error(on_waf_error)
         self._skip = build_skip_predicate(skip)
         if thread_limit is None:
             thread_limit = max(64, (os.cpu_count() or 4) * 8)
@@ -100,15 +98,16 @@ class CorazaMiddleware:
             return
 
         body = await _read_asgi_body(receive)
+        request_info = _request_info_from_scope(scope)
         try:
             result = await self._run_in_thread(
                 _evaluate_request,
                 self._waf,
-                _request_info_from_scope(scope),
+                request_info,
                 body,
             )
-        except CorazaError:
-            await self._handle_waf_error(scope, send)
+        except CorazaError as exc:
+            await self._handle_waf_error(scope, send, exc, request_info)
             return
 
         tx = result.tx
@@ -133,8 +132,15 @@ class CorazaMiddleware:
         except CorazaError:
             pass
 
-    async def _handle_waf_error(self, scope: Scope, send: Send) -> None:
-        if self._on_waf_error is OnWAFError.ALLOW:
+    async def _handle_waf_error(
+        self,
+        scope: Scope,
+        send: Send,
+        exc: Exception,
+        request_info: RequestInfo,
+    ) -> None:
+        decision = _resolve_waf_error_decision(self._on_waf_error, exc, request_info)
+        if decision is OnWAFError.ALLOW:
             raise CorazaError("cannot allow-fall-through after middleware consumed receive")
         await send({
             "type": "http.response.start",
@@ -142,6 +148,44 @@ class CorazaMiddleware:
             "headers": [(b"content-type", b"text/plain; charset=utf-8")],
         })
         await send({"type": "http.response.body", "body": b"waf error"})
+
+
+def _normalize_on_waf_error(arg: OnWAFErrorArg) -> OnWAFError | Callable[..., Any]:
+    """Coerce the ctor argument into an enum or pass the callable through."""
+    if isinstance(arg, OnWAFError):
+        return arg
+    if isinstance(arg, str):
+        return OnWAFError(arg)
+    if callable(arg):
+        return arg
+    raise TypeError(f"on_waf_error must be 'block', 'allow', or callable, got {type(arg)!r}")
+
+
+def _resolve_waf_error_decision(
+    policy: OnWAFError | Callable[..., Any],
+    exc: Exception,
+    request_info: RequestInfo,
+) -> OnWAFError:
+    """Run the user policy callable (if any) and coerce its result.
+
+    Falls back to BLOCK if the callable raises or returns an
+    unrecognized value — fail-closed posture extends to the policy
+    callable itself.
+    """
+    if isinstance(policy, OnWAFError):
+        return policy
+    try:
+        result = policy(exc, request_info)
+    except Exception:
+        return OnWAFError.BLOCK
+    if isinstance(result, OnWAFError):
+        return result
+    if isinstance(result, str):
+        try:
+            return OnWAFError(result)
+        except ValueError:
+            return OnWAFError.BLOCK
+    return OnWAFError.BLOCK
 
 
 def _evaluate_request(
