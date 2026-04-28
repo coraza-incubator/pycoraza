@@ -184,6 +184,11 @@ If you put pycoraza after something that decodes or rewrites the
 body, Coraza will see the post-transform bytes, not what the attacker
 sent.
 
+For full per-framework recipes (Starlette, FastAPI, Flask, Django,
+generic ASGI), the static-asset coexistence options, and the
+common-mistakes table, see
+[`./middleware-ordering.md`](./middleware-ordering.md#starlette).
+
 ### Health checks
 
 Bypass liveness / readiness probes:
@@ -213,5 +218,7 @@ async-shaped throughout.
 
 - [`./fastapi.md`](./fastapi.md) — the same adapter, FastAPI idioms.
 - [`./quickstart.md`](./quickstart.md) — 5-minute tutorial.
+- [`./middleware-ordering.md`](./middleware-ordering.md) — where the
+  WAF goes in the stack.
 - [`./threat-model.md`](./threat-model.md) — fail-closed guarantees.
 - [`./crs-profiles.md`](./crs-profiles.md) — rule-set tuning.

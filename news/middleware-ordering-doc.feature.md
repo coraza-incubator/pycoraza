@@ -1,0 +1,1 @@
+Added `docs/middleware-ordering.md` — per-framework recipes (Flask, Django, FastAPI, Starlette, generic ASGI) showing where `CorazaMiddleware` belongs relative to gzip, auth, CSRF, body parsers, static-asset serving, and reverse-proxy header normalization. Cross-linked from each adapter's existing doc.

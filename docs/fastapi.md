@@ -220,11 +220,19 @@ api.add_middleware(
 - WAF-error path in `"allow"` mode raises rather than passing the
   request through, because `receive` has already been consumed.
 
+## Middleware ordering
+
+For where `CorazaMiddleware` belongs relative to `CORSMiddleware`,
+`GZipMiddleware`, and `TrustedHostMiddleware`, see
+[`./middleware-ordering.md`](./middleware-ordering.md#fastapi).
+
 ## See also
 
 - [`./starlette.md`](./starlette.md) — same adapter, native Starlette
   usage.
 - [`./quickstart.md`](./quickstart.md) — 5-minute first-request
   tutorial.
+- [`./middleware-ordering.md`](./middleware-ordering.md) — where the
+  WAF goes in the stack.
 - [`./threat-model.md`](./threat-model.md) — fail-closed guarantees.
 - [`./crs-profiles.md`](./crs-profiles.md) — rule-set tuning.
