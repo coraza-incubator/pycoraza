@@ -319,7 +319,12 @@ class Abi:
 
 
 def _utf8(s: str) -> bytes:
-    return s.encode("utf-8", errors="replace")
+    # ``surrogateescape`` round-trips raw bytes that adapters decoded
+    # via the same error handler — used for ASGI ``raw_path`` /
+    # ``query_string`` where Starlette gives us exotic bytes wrapped
+    # in surrogates. For ordinary UTF-8 strings the behavior is
+    # identical to ``"strict"``; the WAF sees exactly the wire bytes.
+    return s.encode("utf-8", errors="surrogateescape")
 
 
 def _from_c(ffi: FFI, ptr: Any) -> str | None:

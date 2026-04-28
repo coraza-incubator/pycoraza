@@ -16,7 +16,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ..abi import CorazaError
-from ..skip import build_skip_predicate
+from ..skip import build_skip_predicate, normalize_path_for_skip
 from ..types import Interruption, OnWAFError, ProcessMode, RequestInfo
 from ..waf import WAF
 
@@ -31,6 +31,31 @@ except ImportError as exc:  # pragma: no cover - import guard
 
 
 OnBlock = Callable[[Interruption, HttpRequest], HttpResponse]
+
+
+# RFC 7230 §3.2.2 list-valued request headers — see flask/__init__.py
+# for the rationale. Same set, same justification: rules keyed on the
+# exact ``Content-Type``-style value miss attacks when a proxy merges
+# repeated headers into one comma-joined env value.
+_LIST_VALUED_REQUEST_HEADERS = frozenset({
+    "x-forwarded-for",
+    "forwarded",
+    "cookie",
+    "accept",
+    "accept-encoding",
+    "accept-language",
+    "via",
+    "warning",
+    "x-forwarded-proto",
+    "x-forwarded-host",
+})
+
+
+def _split_list_header(value: str):
+    for entry in value.split(","):
+        trimmed = entry.strip()
+        if trimmed:
+            yield trimmed
 
 
 class CorazaMiddleware:
@@ -76,7 +101,12 @@ class CorazaMiddleware:
         self._skip = build_skip_predicate(getattr(settings, "PYCORAZA_SKIP", None))
 
     def __call__(self, request: HttpRequest) -> HttpResponse:
-        if self._skip(request.method or "GET", request.path or ""):
+        # Normalize before skip-matching: ``/admin;.png`` must NOT
+        # match the ``.png`` extension skip — Django's URL resolver
+        # ignores the ``;...`` segment when dispatching, so the
+        # request still hits the ``/admin`` view.
+        skip_path = normalize_path_for_skip(request.path or "")
+        if self._skip(request.method or "GET", skip_path):
             return self._get_response(request)
 
         try:
@@ -158,12 +188,21 @@ def _request_info_from_django(request: HttpRequest) -> RequestInfo:
     except (TypeError, ValueError):
         has_body = False
 
+    # Re-split RFC 7230 list-valued headers: Django's META collapses
+    # repeated request headers into a comma-joined string (same WSGI
+    # limitation as Flask), so we recover the originals before
+    # forwarding to Coraza. Singular headers pass through verbatim.
     headers: list[tuple[str, str]] = []
     for key, value in request.META.items():
         if not isinstance(value, str):
             continue
         if key.startswith("HTTP_"):
-            headers.append((key[5:].replace("_", "-").lower(), value))
+            name = key[5:].replace("_", "-").lower()
+            if name in _LIST_VALUED_REQUEST_HEADERS and "," in value:
+                for entry in _split_list_header(value):
+                    headers.append((name, entry))
+            else:
+                headers.append((name, value))
         elif key == "CONTENT_TYPE" and value:
             if not has_body and value == "text/plain":
                 continue  # wsgiref synthetic default — drop

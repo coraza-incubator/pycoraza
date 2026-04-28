@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..abi import CorazaError
 from ..client_ip import ClientIPArg, ClientIPExtractor, resolve_extractor
-from ..skip import SkipArg, build_skip_predicate
+from ..skip import SkipArg, build_skip_predicate, normalize_path_for_skip
 from ..types import Interruption, OnWAFError, OnWAFErrorArg, ProcessMode, RequestInfo
 
 if TYPE_CHECKING:
@@ -97,7 +97,11 @@ class CorazaMiddleware:
 
         path = scope.get("path", "") or ""
         method = scope.get("method", "GET")
-        if self._skip(method, path):
+        # Normalize before skip-matching: ``/admin;.png`` must NOT
+        # match the ``.png`` extension skip — Starlette's path
+        # converter ignores the ``;...`` segment when dispatching, so
+        # the request still hits the ``/admin`` route.
+        if self._skip(method, normalize_path_for_skip(path)):
             await self._app(scope, receive, send)
             return
 
@@ -274,12 +278,21 @@ def _request_info_from_scope(
     path = scope.get("path", "") or ""
     raw_path = scope.get("raw_path")
     if isinstance(raw_path, (bytes, bytearray)):
-        path = raw_path.decode("latin-1", errors="replace") or path
+        # Decode as UTF-8 with surrogateescape so non-UTF-8 bytes
+        # round-trip cleanly to the WAF instead of expanding into
+        # latin-1-then-utf8 mojibake. Starlette's router decodes the
+        # raw bytes as UTF-8 at dispatch; we MUST hand Coraza the same
+        # bytes the wire carried, or rules keyed on path content miss
+        # attacks where the raw bytes contain multi-byte UTF-8 (e.g.
+        # the wire bytes for the CJK character at codepoint U+4E2D).
+        # ``surrogateescape`` smuggles invalid-UTF-8 bytes through as
+        # lone surrogates that ``_utf8`` re-emits as the same bytes.
+        path = raw_path.decode("utf-8", errors="surrogateescape") or path
     query = scope.get("query_string", b"") or b""
     host = next((v for k, v in headers if k == "host"), "")
     url = f"{scheme}://{host}{path}"
     if query:
-        url = f"{url}?{query.decode('latin-1', errors='replace')}"
+        url = f"{url}?{query.decode('utf-8', errors='surrogateescape')}"
 
     client = scope.get("client") or ("", 0)
     server = scope.get("server") or ("", 0)
