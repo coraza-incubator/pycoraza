@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 from ..abi import CorazaError
+from ..client_ip import ClientIPArg, ClientIPExtractor, resolve_extractor
 from ..skip import SkipArg, build_skip_predicate
 from ..types import Interruption, OnWAFError, OnWAFErrorArg, ProcessMode, RequestInfo
 
@@ -42,6 +43,7 @@ class CorazaMiddleware:
         inspect_response: bool = False,
         on_waf_error: OnWAFErrorArg = OnWAFError.BLOCK,
         skip: SkipArg = None,
+        extract_client_ip: ClientIPArg = None,
     ) -> None:
         self._app = app
         self._waf = waf
@@ -49,6 +51,7 @@ class CorazaMiddleware:
         self._inspect_response = inspect_response
         self._on_waf_error = _normalize_on_waf_error(on_waf_error)
         self._skip = build_skip_predicate(skip)
+        self._extract_client_ip: ClientIPExtractor | None = resolve_extractor(extract_client_ip)
 
     def __call__(
         self, environ: WSGIEnviron, start_response: WSGIStartResponse
@@ -58,7 +61,7 @@ class CorazaMiddleware:
         if self._skip(method, path):
             return self._app(environ, start_response)
 
-        request_info = _request_info_from_environ(environ, path)
+        request_info = _request_info_from_environ(environ, path, self._extract_client_ip)
         try:
             tx = self._waf.new_transaction()
         except CorazaError as exc:
@@ -191,7 +194,11 @@ def _read_wsgi_body(environ: WSGIEnviron) -> bytes | None:
     return data
 
 
-def _request_info_from_environ(environ: WSGIEnviron, path: str) -> RequestInfo:
+def _request_info_from_environ(
+    environ: WSGIEnviron,
+    path: str,
+    extract_client_ip: ClientIPExtractor | None = None,
+) -> RequestInfo:
     scheme = environ.get("wsgi.url_scheme", "http")
     query = environ.get("QUERY_STRING", "")
     host = environ.get("HTTP_HOST") or environ.get("SERVER_NAME", "")
@@ -200,12 +207,20 @@ def _request_info_from_environ(environ: WSGIEnviron, path: str) -> RequestInfo:
     if query:
         url = f"{url}?{query}"
 
+    if extract_client_ip is not None:
+        try:
+            remote_addr = extract_client_ip(environ) or environ.get("REMOTE_ADDR", "")
+        except Exception:
+            remote_addr = environ.get("REMOTE_ADDR", "")
+    else:
+        remote_addr = environ.get("REMOTE_ADDR", "")
+
     return RequestInfo(
         method=environ.get("REQUEST_METHOD", "GET"),
         url=url,
         headers=tuple(_iter_wsgi_headers(environ)),
         protocol=environ.get("SERVER_PROTOCOL", "HTTP/1.1"),
-        remote_addr=environ.get("REMOTE_ADDR", ""),
+        remote_addr=remote_addr,
         remote_port=int(environ.get("REMOTE_PORT", "0") or 0),
         server_port=int(environ.get("SERVER_PORT", "0") or 0),
     )

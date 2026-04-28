@@ -65,3 +65,47 @@ class TestBuildOnly:
             rv = c.get("/static/app.js")
         assert rv.status_code == 404
         assert any(c[0] == "new_transaction" for c in fake_abi.call_log)
+
+
+class TestExtractClientIP:
+    def test_default_uses_remote_addr(self, fake_abi: FakeLib) -> None:
+        app = _make_app()
+        with app.test_client() as c:
+            c.get("/", headers={"X-Forwarded-For": "203.0.113.9, 10.0.0.1"})
+        ips = [c[1] for c in fake_abi.call_log if c[0] == "process_connection"]
+        assert ips and ips[0] == "127.0.0.1"
+
+    def test_callable_extractor(self, fake_abi: FakeLib) -> None:
+        def custom(environ: dict) -> str:
+            return environ.get("HTTP_X_REAL_IP", "")
+
+        app = _make_app(mw_kwargs={"extract_client_ip": custom})
+        with app.test_client() as c:
+            c.get("/", headers={"X-Real-IP": "198.51.100.7"})
+        ips = [c[1] for c in fake_abi.call_log if c[0] == "process_connection"]
+        assert ips and ips[0] == "198.51.100.7"
+
+    def test_preset_xff_first(self, fake_abi: FakeLib) -> None:
+        app = _make_app(mw_kwargs={"extract_client_ip": "xff_first"})
+        with app.test_client() as c:
+            c.get("/", headers={"X-Forwarded-For": "203.0.113.9, 10.0.0.1"})
+        ips = [c[1] for c in fake_abi.call_log if c[0] == "process_connection"]
+        assert ips and ips[0] == "203.0.113.9"
+
+    def test_preset_cloudflare(self, fake_abi: FakeLib) -> None:
+        app = _make_app(mw_kwargs={"extract_client_ip": "cloudflare"})
+        with app.test_client() as c:
+            c.get("/", headers={"CF-Connecting-IP": "198.51.100.42"})
+        ips = [c[1] for c in fake_abi.call_log if c[0] == "process_connection"]
+        assert ips and ips[0] == "198.51.100.42"
+
+    def test_extractor_exception_falls_back_to_remote_addr(self, fake_abi: FakeLib) -> None:
+        def boom(_environ: dict) -> str:
+            raise RuntimeError("nope")
+
+        app = _make_app(mw_kwargs={"extract_client_ip": boom})
+        with app.test_client() as c:
+            rv = c.get("/")
+        assert rv.status_code == 200
+        ips = [c[1] for c in fake_abi.call_log if c[0] == "process_connection"]
+        assert ips and ips[0] == "127.0.0.1"

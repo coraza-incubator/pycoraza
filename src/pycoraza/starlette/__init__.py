@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..abi import CorazaError
+from ..client_ip import ClientIPArg, ClientIPExtractor, resolve_extractor
 from ..skip import SkipArg, build_skip_predicate
 from ..types import Interruption, OnWAFError, OnWAFErrorArg, ProcessMode, RequestInfo
 
@@ -70,6 +71,7 @@ class CorazaMiddleware:
         on_waf_error: OnWAFErrorArg = OnWAFError.BLOCK,
         skip: SkipArg = None,
         thread_limit: int | None = None,
+        extract_client_ip: ClientIPArg = None,
     ) -> None:
         self._app = app
         self._waf = waf
@@ -77,6 +79,7 @@ class CorazaMiddleware:
         self._inspect_response = inspect_response
         self._on_waf_error = _normalize_on_waf_error(on_waf_error)
         self._skip = build_skip_predicate(skip)
+        self._extract_client_ip: ClientIPExtractor | None = resolve_extractor(extract_client_ip)
         if thread_limit is None:
             thread_limit = max(64, (os.cpu_count() or 4) * 8)
         self._thread_limit = thread_limit
@@ -98,7 +101,7 @@ class CorazaMiddleware:
             return
 
         body = await _read_asgi_body(receive)
-        request_info = _request_info_from_scope(scope)
+        request_info = _request_info_from_scope(scope, self._extract_client_ip)
         try:
             result = await self._run_in_thread(
                 _evaluate_request,
@@ -246,7 +249,10 @@ def _replay_receive(original: Receive, body: bytes) -> Receive:
     return receive
 
 
-def _request_info_from_scope(scope: Scope) -> RequestInfo:
+def _request_info_from_scope(
+    scope: Scope,
+    extract_client_ip: ClientIPExtractor | None = None,
+) -> RequestInfo:
     # ASGI ``scope["headers"]`` is a list of ``(bytes, bytes)`` tuples.
     # Repeated request headers (e.g. two ``Cookie`` lines or proxy-split
     # ``X-Forwarded-For``) appear as distinct entries — preserve that
@@ -268,12 +274,21 @@ def _request_info_from_scope(scope: Scope) -> RequestInfo:
 
     client = scope.get("client") or ("", 0)
     server = scope.get("server") or ("", 0)
+    wire_addr = str(client[0] or "")
+    if extract_client_ip is not None:
+        try:
+            extracted = extract_client_ip(scope)
+        except Exception:
+            extracted = ""
+        remote_addr = extracted or wire_addr
+    else:
+        remote_addr = wire_addr
     return RequestInfo(
         method=scope.get("method", "GET"),
         url=url,
         headers=headers,
         protocol=f"HTTP/{scope.get('http_version', '1.1')}",
-        remote_addr=str(client[0] or ""),
+        remote_addr=remote_addr,
         remote_port=int(client[1] or 0),
         server_port=int(server[1] or 0),
     )
