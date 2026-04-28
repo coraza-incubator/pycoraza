@@ -73,6 +73,10 @@ class TestAttackBlocking:
         body = json.loads(rv.content)
         assert body["error"] == "blocked"
         assert body["rule_id"] == 1001
+        # New fields exposed by the matched-rule wiring.
+        assert body["msg"] == "blocked"
+        assert body["status"] == 403
+        assert body["action"] == "deny"
         kinds = [c[0] for c in fake_abi.call_log]
         assert "process_logging" in kinds
         assert "free_transaction" in kinds

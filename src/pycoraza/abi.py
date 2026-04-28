@@ -24,6 +24,7 @@ GIL contract:
 
 from __future__ import annotations
 
+import re
 import threading
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, Protocol
@@ -257,6 +258,11 @@ class Abi:
             action = _from_c(self._ffi, ptr.action) or ""
             data = _from_c(self._ffi, ptr.data) or ""
             status = int(ptr.status or 0)
+            # `coraza_intervention_t` (libcoraza) carries no rule id —
+            # WAF.create_waf wires a per-WAF error callback that records
+            # matched rules onto the active Transaction. The disruptive
+            # rule is the LAST entry recorded, so callers should read
+            # `Transaction.matched_rules()[-1]` for the contributing id.
             rule_id = int(getattr(ptr, "rule_id", 0) or 0)
             return Interruption(
                 rule_id=rule_id, action=action, status=status, data=data
@@ -329,4 +335,25 @@ ErrorCallback = Callable[[int, str], None]
 DebugCallback = Callable[[int, str, str], None]
 
 
-__all__ = ["Abi", "CorazaError"]
+_RULE_ID_RE = re.compile(r'\[id\s+"(\d+)"\]')
+
+
+def parse_rule_id(error_log: str) -> int:
+    """Extract the matched rule id from a Coraza/CRS error log line.
+
+    Coraza emits matched-rule logs in the canonical CRS shape:
+    `... [id "942100"] [msg "..."] ...`. We pull the first `[id "N"]`
+    token; if absent (custom rules without an id directive) we return 0.
+    """
+    if not error_log:
+        return 0
+    m = _RULE_ID_RE.search(error_log)
+    if m is None:
+        return 0
+    try:
+        return int(m.group(1))
+    except (TypeError, ValueError):
+        return 0
+
+
+__all__ = ["Abi", "CorazaError", "parse_rule_id"]

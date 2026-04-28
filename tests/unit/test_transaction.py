@@ -226,3 +226,82 @@ class TestInterruptionAccessor:
         assert tx.interruption() is None
         tx.close()
         waf.close()
+
+
+class TestMatchedRules:
+    def test_empty_when_no_match(self, fake_abi: FakeLib) -> None:
+        waf = _make_waf()
+        tx = waf.new_transaction()
+        assert tx.matched_rules() == []
+        tx.close()
+        waf.close()
+
+    def test_populated_via_error_callback(self, fake_abi: FakeLib) -> None:
+        from _fake_abi import _InterventionSpec
+
+        # CRS-shape error log. The fake fires the WAF-level error
+        # callback during the phase that triggers, so by the time
+        # `tx.matched_rules()` is called the chain is recorded.
+        fake_abi.trigger_uri_contains = "/attack"
+        fake_abi.interruption_spec = _InterventionSpec(
+            rule_id=942100,
+            data="SQLi attack",
+            severity=5,
+            error_log=(
+                'Coraza: Warning. detected sqli '
+                '[file "rules/942.conf"] [line "1"] [id "942100"] '
+                '[msg "SQLi attack"] [severity "CRITICAL"]'
+            ),
+        )
+        waf = _make_waf()
+        tx = waf.new_transaction()
+        interrupted = tx.process_request_bundle(_req(url="/attack?x=1"))
+        assert interrupted is True
+        matches = tx.matched_rules()
+        assert len(matches) == 1
+        assert matches[0].id == 942100
+        assert matches[0].severity == 5
+        assert "SQLi attack" in matches[0].message
+        tx.close()
+        waf.close()
+
+    def test_interruption_rule_id_uses_last_match(self, fake_abi: FakeLib) -> None:
+        from _fake_abi import _InterventionSpec
+
+        # Coraza always returns rule_id=0 in the C struct; we overlay
+        # it from the last MatchedRule in the chain.
+        fake_abi.trigger_uri_contains = "/attack"
+        fake_abi.interruption_spec = _InterventionSpec(
+            rule_id=0,
+            data="anomaly threshold exceeded",
+            error_log=(
+                '[id "949110"] [msg "Inbound Anomaly Score Exceeded"] '
+                '[severity "CRITICAL"]'
+            ),
+        )
+        waf = _make_waf()
+        tx = waf.new_transaction()
+        tx.process_request_bundle(_req(url="/attack"))
+        intr = tx.interruption()
+        assert intr is not None
+        assert intr.rule_id == 949110
+        tx.close()
+        waf.close()
+
+    def test_returns_independent_snapshot(self, fake_abi: FakeLib) -> None:
+        from _fake_abi import _InterventionSpec
+
+        fake_abi.trigger_uri_contains = "/attack"
+        fake_abi.interruption_spec = _InterventionSpec(
+            rule_id=1234,
+            error_log='[id "1234"] [msg "x"]',
+        )
+        waf = _make_waf()
+        tx = waf.new_transaction()
+        tx.process_request_bundle(_req(url="/attack"))
+        snap = tx.matched_rules()
+        snap.clear()
+        # Mutating the snapshot must not affect the canonical list.
+        assert len(tx.matched_rules()) == 1
+        tx.close()
+        waf.close()

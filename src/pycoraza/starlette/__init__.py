@@ -46,6 +46,7 @@ class _RequestResult:
     tx: Transaction
     interrupted: bool
     interruption: Interruption | None
+    matched_rules: list
 
 
 class CorazaMiddleware:
@@ -115,6 +116,7 @@ class CorazaMiddleware:
 
         tx = result.tx
         if result.interrupted and result.interruption is not None and self._waf.mode is ProcessMode.BLOCK:
+            _log_block(self._waf.logger, result.interruption, result.matched_rules)
             if not await _call_on_block_async(self._on_block, result.interruption, scope, send):
                 await _default_block_response(result.interruption, send)
             await self._finalize(tx)
@@ -200,12 +202,19 @@ def _evaluate_request(
     into ONE thread call eliminates per-phase event-loop round trips.
     On a 50-conn wrk bench this cuts scheduler overhead ~3x vs the
     original "one to_thread per phase" implementation.
+
+    The matched-rule list is also snapshot here, on the same worker
+    thread that drove the cgo callbacks — that way the caller has
+    a complete picture without bouncing back into the WAF.
     """
     tx = waf.new_transaction()
     try:
         interrupted = tx.process_request_bundle(request, body)
         intr = tx.interruption() if interrupted else None
-        return _RequestResult(tx=tx, interrupted=interrupted, interruption=intr)
+        matches = tx.matched_rules() if interrupted else []
+        return _RequestResult(
+            tx=tx, interrupted=interrupted, interruption=intr, matched_rules=matches
+        )
     except CorazaError:
         try:
             tx.close()
@@ -310,7 +319,9 @@ async def _default_block_response(intr: Interruption, send: Send) -> None:
     payload = (
         f'{{"error":"blocked","rule_id":{intr.rule_id},'
         f'"action":"{_escape(intr.action)}",'
-        f'"data":"{_escape(intr.data)}"}}'
+        f'"msg":"{_escape(intr.data)}",'
+        f'"data":"{_escape(intr.data)}",'
+        f'"status":{status}}}'
     ).encode()
     await send({
         "type": "http.response.start",
@@ -325,6 +336,29 @@ async def _default_block_response(intr: Interruption, send: Send) -> None:
 
 def _escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def _log_block(logger: Any, intr: Interruption, matched: list) -> None:
+    """Emit the block + every contributing rule.
+
+    `warning` for the disruptive rule (operator headline), `info` for
+    each link in the chain — CRS anomaly-score blocks have a 5-10 rule
+    chain that the operator needs to see for triage.
+    """
+    logger.warning(
+        "blocked",
+        rule_id=intr.rule_id,
+        status=intr.status,
+        action=intr.action,
+        msg=intr.data,
+    )
+    for rule in matched:
+        logger.info(
+            "rule chain",
+            rule_id=rule.id,
+            severity=rule.severity,
+            msg=rule.message,
+        )
 
 
 class _WrappedSend:

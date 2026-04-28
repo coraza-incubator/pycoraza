@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from .abi import CorazaError
-from .types import Interruption, RequestInfo, ResponseInfo
+from .types import Interruption, MatchedRule, RequestInfo, ResponseInfo
 
 if TYPE_CHECKING:
     from .waf import WAF
@@ -30,6 +31,8 @@ class Transaction:
         "_cached_interruption",
         "_closed",
         "_lock",
+        "_matched_rules",
+        "_matches_lock",
         "_request_body_started",
         "_response_body_started",
         "_tx",
@@ -44,6 +47,50 @@ class Transaction:
         self._request_body_started = False
         self._response_body_started = False
         self._cached_interruption: Interruption | None = None
+        # The error callback fires from the calling Python thread (cgo
+        # invokes callbacks on the same OS thread that entered Go), but
+        # we still guard the list — defensive against misuse from
+        # adapter code that interleaves phases across threads on the
+        # same Transaction (unsupported but easy to mis-write).
+        self._matches_lock = threading.Lock()
+        self._matched_rules: list[MatchedRule] = []
+
+    def _record_matched_rule(self, rule: MatchedRule) -> None:
+        """Append a match recorded by the WAF-level error callback.
+
+        Called by `WAF` while a phase function is running on this
+        thread. Public-ish so the WAF callback can reach it without
+        breaking encapsulation through getters.
+        """
+        with self._matches_lock:
+            self._matched_rules.append(rule)
+
+    def matched_rules(self) -> list[MatchedRule]:
+        """Snapshot of every rule that fired during this transaction.
+
+        Returns a fresh list; callers may freely mutate it. Order is
+        the order rules fired (chronological), so the LAST entry is
+        typically the disruptive rule on a CRS anomaly-score block.
+        """
+        with self._matches_lock:
+            return list(self._matched_rules)
+
+    @contextmanager
+    def _active(self) -> Iterator[None]:
+        """Mark this transaction as the WAF's active one for the call.
+
+        cgo invokes the error callback on the OS thread that entered
+        Go, so the per-thread `WAF._active` slot is the correct routing
+        key. We set it on enter and clear it on exit, including on the
+        error path — leaving stale state would silently pin matches to
+        a completed transaction.
+        """
+        prior = getattr(self._waf._active, "tx", None)
+        self._waf._set_active_transaction(self)
+        try:
+            yield
+        finally:
+            self._waf._set_active_transaction(prior)
 
     def _check_interruption(self) -> bool:
         """Poll libcoraza for a pending interruption.
@@ -58,8 +105,34 @@ class Transaction:
         intr = self._waf.abi.intervention(self.handle)
         if intr is None:
             return False
-        self._cached_interruption = intr
+        self._cached_interruption = self._enrich_interruption(intr)
         return True
+
+    def _enrich_interruption(self, intr: Interruption) -> Interruption:
+        """Patch the rule id on an interruption with the last match.
+
+        The C `coraza_intervention_t` struct does not carry the rule id
+        of the matched rule, so libcoraza always returns rule_id=0. The
+        contributing rule arrived via the error callback; the LAST
+        match before disruption is, by Coraza's evaluation order, the
+        disruptive rule (or — for CRS anomaly-score blocks — the
+        949110/980130 finalizer that crossed the score threshold).
+        Operators read this field for triage; callers needing the full
+        chain use `matched_rules()`.
+        """
+        if intr.rule_id != 0:
+            return intr
+        with self._matches_lock:
+            last = self._matched_rules[-1] if self._matched_rules else None
+        if last is None:
+            return intr
+        return Interruption(
+            rule_id=last.id,
+            action=intr.action,
+            status=intr.status,
+            data=intr.data or last.message,
+            source=intr.source,
+        )
 
     @property
     def waf(self) -> WAF:
@@ -78,12 +151,14 @@ class Transaction:
         server_ip: str = "",
         server_port: int = 0,
     ) -> None:
-        self._waf.abi.process_connection(
-            self.handle, client_ip, client_port, server_ip, server_port
-        )
+        with self._active():
+            self._waf.abi.process_connection(
+                self.handle, client_ip, client_port, server_ip, server_port
+            )
 
     def process_uri(self, uri: str, method: str, protocol: str = "HTTP/1.1") -> None:
-        self._waf.abi.process_uri(self.handle, uri, method, protocol)
+        with self._active():
+            self._waf.abi.process_uri(self.handle, uri, method, protocol)
 
     def add_request_header(self, name: str, value: str) -> None:
         self._waf.abi.add_request_header(self.handle, name, value)
@@ -94,8 +169,9 @@ class Transaction:
     def process_request_headers(self) -> bool:
         if self._cached_interruption is not None:
             return True
-        self._waf.abi.process_request_headers(self.handle)
-        return self._check_interruption()
+        with self._active():
+            self._waf.abi.process_request_headers(self.handle)
+            return self._check_interruption()
 
     def append_request_body(self, chunk: bytes) -> None:
         if chunk:
@@ -105,8 +181,9 @@ class Transaction:
     def process_request_body(self) -> bool:
         if self._cached_interruption is not None:
             return True
-        self._waf.abi.process_request_body(self.handle)
-        return self._check_interruption()
+        with self._active():
+            self._waf.abi.process_request_body(self.handle)
+            return self._check_interruption()
 
     def process_request_bundle(
         self, request: RequestInfo, body: bytes | None = None
@@ -133,8 +210,9 @@ class Transaction:
     def process_response_headers(self, status: int, protocol: str = "HTTP/1.1") -> bool:
         if self._cached_interruption is not None:
             return True
-        self._waf.abi.process_response_headers(self.handle, status, protocol)
-        return self._check_interruption()
+        with self._active():
+            self._waf.abi.process_response_headers(self.handle, status, protocol)
+            return self._check_interruption()
 
     def add_response_header(self, name: str, value: str) -> None:
         self._waf.abi.add_response_header(self.handle, name, value)
@@ -150,8 +228,9 @@ class Transaction:
     def process_response_body(self) -> bool:
         if self._cached_interruption is not None:
             return True
-        self._waf.abi.process_response_body(self.handle)
-        return self._check_interruption()
+        with self._active():
+            self._waf.abi.process_response_body(self.handle)
+            return self._check_interruption()
 
     def process_response(self, response: ResponseInfo, body: bytes | None = None) -> bool:
         self.add_response_headers(response.headers)
@@ -172,15 +251,16 @@ class Transaction:
     def process_logging(self) -> None:
         if self._closed:
             return
-        self._waf.abi.process_logging(self.handle)
+        with self._active():
+            self._waf.abi.process_logging(self.handle)
 
     def interruption(self) -> Interruption | None:
         if self._cached_interruption is not None:
             return self._cached_interruption
         intr = self._waf.abi.intervention(self.handle)
         if intr is not None:
-            self._cached_interruption = intr
-        return intr
+            self._cached_interruption = self._enrich_interruption(intr)
+        return self._cached_interruption
 
     def close(self) -> None:
         with self._lock:

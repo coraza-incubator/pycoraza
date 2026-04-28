@@ -78,6 +78,10 @@ class _InterventionSpec:
     rule_id: int = 1001
     disruptive: int = 1
     pause: int = 0
+    severity: int = 3
+    # Realistic CRS-shape error log so `parse_rule_id` exercises the
+    # exact regex it'll see at runtime.
+    error_log: str | None = None
 
 
 @dataclass
@@ -99,6 +103,7 @@ class _InterventionPtr:
 class _WafState:
     config: Any
     rules: list[str] = field(default_factory=list)
+    error_callback: Any = None
 
 
 @dataclass
@@ -154,6 +159,7 @@ class FakeLib:
         self.raise_on_process_uri: bool = False
         self.fail_rc_for: set[str] = set()
         self.response_body_processable: bool = True
+        self._next_severity: int | None = None
 
         self._ffi = _FakeFFI()
 
@@ -162,6 +168,38 @@ class FakeLib:
 
     def _fail_rc(self, op: str) -> int:
         return -1 if op in self.fail_rc_for else 0
+
+    def _fire_error_callback(self, state: _TxState) -> None:
+        """Simulate libcoraza calling back into Python with the matched rule.
+
+        Real libcoraza fires the error callback synchronously DURING
+        the phase function for each rule that matched in that phase.
+        We do the same here so transaction.matched_rules() is populated
+        in unit tests.
+        """
+        spec = state.interruption_spec
+        if spec is None:
+            return
+        waf_state = self.wafs.get(id(state.waf))
+        if waf_state is None:
+            return
+        cb = waf_state.error_callback
+        if cb is None:
+            cfg_state = self.configs.get(id(waf_state.config))
+            cb = getattr(cfg_state, "error_callback", None) if cfg_state else None
+        if cb is None:
+            return
+        log = spec.error_log or (
+            f'Coraza: Warning. matched fake rule [file "fake.conf"] '
+            f'[id "{spec.rule_id}"] [msg "{spec.data}"] '
+            f'[severity "WARNING"] [tag "fake-test"]'
+        )
+        prior = self._next_severity
+        self._next_severity = spec.severity
+        try:
+            cb(None, _FakeCData(log.encode("utf-8")))
+        finally:
+            self._next_severity = prior
 
     def coraza_new_waf_config(self) -> Any:
         if self.raise_on_new_waf_config:
@@ -200,7 +238,11 @@ class FakeLib:
             return None
         waf = _FakeCData(b"waf")
         state = self.configs.get(id(cfg), _ConfigState())
-        self.wafs[id(waf)] = _WafState(config=cfg, rules=list(state.rules))
+        self.wafs[id(waf)] = _WafState(
+            config=cfg,
+            rules=list(state.rules),
+            error_callback=state.error_callback,
+        )
         self._log("new_waf")
         return waf
 
@@ -300,6 +342,7 @@ class FakeLib:
             state.request_headers_processed = True
         self._log("process_request_headers")
         if state and state.interruption_spec is not None:
+            self._fire_error_callback(state)
             return 1
         return self._fail_rc("process_request_headers")
 
@@ -322,6 +365,7 @@ class FakeLib:
             state.request_body_processed = True
         self._log("process_request_body")
         if state and state.interruption_spec is not None:
+            self._fire_error_callback(state)
             return 1
         return self._fail_rc("process_request_body")
 
@@ -363,6 +407,7 @@ class FakeLib:
                 state.interruption_spec = self.interruption_spec
         self._log("process_response_headers", int(status))
         if state and state.interruption_spec is not None and not state.intervention_served:
+            self._fire_error_callback(state)
             return 1
         return self._fail_rc("process_response_headers")
 
@@ -385,6 +430,7 @@ class FakeLib:
             state.response_body_processed = True
         self._log("process_response_body")
         if state and state.interruption_spec is not None and not state.intervention_served:
+            self._fire_error_callback(state)
             return 1
         return self._fail_rc("process_response_body")
 
@@ -438,7 +484,7 @@ class FakeLib:
 
     def coraza_matched_rule_get_severity(self, handle: Any) -> int:
         self._log("matched_rule_get_severity")
-        return 3
+        return self._next_severity if self._next_severity is not None else 3
 
 
 def install_fake_bindings() -> FakeLib:
