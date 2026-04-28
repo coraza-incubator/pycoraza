@@ -179,9 +179,51 @@ PROBE_PATHS: tuple[str, ...] = (
 PROBE_METHODS: tuple[str, ...] = ("HEAD", "OPTIONS")
 
 
+# What an adapter does when a request body exceeds `BodyLimits.max_total`.
+# Default is `block` everywhere — fail closed, refuse to forward unbounded
+# input. `skip` and `evaluate_partial` are explicit availability/coverage
+# trade-offs operators must opt into.
+BodyOverflowAction = Literal["block", "skip", "evaluate_partial"]
+
+
+@dataclass(slots=True, frozen=True)
+class BodyLimits:
+    """Bound the memory cost of WAF body inspection.
+
+    Bodies up to ``max_in_memory`` are buffered in RAM (the historical
+    path — fast, zero-syscall). Between ``max_in_memory`` and
+    ``max_total`` the overflow is spooled to a
+    ``tempfile.SpooledTemporaryFile`` so the process footprint stays
+    bounded even under sustained 1MB+ uploads. Beyond ``max_total``,
+    ``on_overflow`` decides:
+
+      * ``"block"`` (default, fail-closed): return 413 Payload Too Large
+        without invoking the downstream app.
+      * ``"skip"``: bypass the WAF for this request and forward the
+        full body to the downstream app. Logs a warning. Trades
+        coverage for availability — only safe when an upstream layer
+        (CDN, ingress) already enforces a hard size cap.
+      * ``"evaluate_partial"``: feed Coraza what fits in ``max_total``,
+        then forward the truncated body to the downstream app. The
+        attacker can still smuggle bytes past the cap, so document
+        this as an attack-detection gap when enabling.
+
+    Defaults are 1MB / 32MB — sized to fit a typical JSON API plus
+    smaller multipart uploads without spilling to disk, while keeping
+    a single TLS-terminated worker capped at ~32MB peak per in-flight
+    request.
+    """
+
+    max_in_memory: int = 1024 * 1024
+    max_total: int = 32 * 1024 * 1024
+    on_overflow: BodyOverflowAction = "block"
+
+
 __all__ = [
     "PROBE_METHODS",
     "PROBE_PATHS",
+    "BodyLimits",
+    "BodyOverflowAction",
     "Interruption",
     "MatchedRule",
     "OnWAFError",

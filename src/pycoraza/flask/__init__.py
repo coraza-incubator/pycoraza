@@ -10,15 +10,29 @@ in and (opt-in) on the way out. Mirrors `@coraza/express` behavior:
 
 from __future__ import annotations
 
-import io
 from collections.abc import Callable, Iterable
-from typing import TYPE_CHECKING, Any
+from typing import IO, TYPE_CHECKING, Any
 from urllib.parse import quote
 
+from .._body import (
+    BufferedBody,
+    buffer_request_body,
+    chunked_reader,
+    decide_overflow,
+    empty_replay,
+    resolve_limits,
+)
 from ..abi import CorazaError
 from ..client_ip import ClientIPArg, ClientIPExtractor, resolve_extractor
 from ..skip import SkipArg, build_skip_predicate, normalize_path_for_skip
-from ..types import Interruption, OnWAFError, OnWAFErrorArg, ProcessMode, RequestInfo
+from ..types import (
+    BodyLimits,
+    Interruption,
+    OnWAFError,
+    OnWAFErrorArg,
+    ProcessMode,
+    RequestInfo,
+)
 
 if TYPE_CHECKING:
     from ..transaction import Transaction
@@ -44,6 +58,7 @@ class CorazaMiddleware:
         on_waf_error: OnWAFErrorArg = OnWAFError.BLOCK,
         skip: SkipArg = None,
         extract_client_ip: ClientIPArg = None,
+        body_limits: BodyLimits | None = None,
     ) -> None:
         self._app = app
         self._waf = waf
@@ -52,6 +67,7 @@ class CorazaMiddleware:
         self._on_waf_error = _normalize_on_waf_error(on_waf_error)
         self._skip = build_skip_predicate(skip)
         self._extract_client_ip: ClientIPExtractor | None = resolve_extractor(extract_client_ip)
+        self._body_limits = resolve_limits(body_limits)
 
     def __call__(
         self, environ: WSGIEnviron, start_response: WSGIStartResponse
@@ -72,9 +88,29 @@ class CorazaMiddleware:
         except CorazaError as exc:
             return self._handle_waf_error(environ, start_response, exc, request_info)
 
+        buffered: BufferedBody | None = None
+        # Phase 1+2 split-feed: read the body in chunks straight into
+        # the transaction so we never need a full second copy of a
+        # large upload sitting in the heap. ``buffered`` carries the
+        # replay stream we'll re-attach to ``wsgi.input`` below.
         try:
+            tx.process_connection(
+                request_info.remote_addr or "",
+                request_info.remote_port or 0,
+                "",
+                request_info.server_port or 0,
+            )
+            tx.add_request_headers(request_info.headers)
+            tx.process_uri(request_info.url, request_info.method, request_info.protocol)
+            if tx.process_request_headers():
+                blocked = self._maybe_block(tx, environ, start_response)
+                if blocked is not None:
+                    return blocked
+
             try:
-                body = _read_wsgi_body(environ)
+                buffered = self._read_request_body_into_tx(environ, tx)
+            except CorazaError:
+                raise
             except Exception as exc:
                 # Slow / broken clients can drop mid-read with TimeoutError,
                 # ConnectionResetError, or any framework-specific stream
@@ -84,14 +120,61 @@ class CorazaMiddleware:
                 return _finalize_now(
                     self._handle_waf_error(environ, start_response, exc, request_info), tx
                 )
-            interrupted = tx.process_request_bundle(request_info, body)
-            if interrupted:
-                intr = tx.interruption()
-                if intr is not None and self._waf.mode is ProcessMode.BLOCK:
-                    _log_block(self._waf.logger, intr, tx.matched_rules())
-                    result = _call_on_block(self._on_block, intr, environ, start_response)
-                    return _finalize_now(result, tx)
+
+            decision = decide_overflow(buffered, self._body_limits)
+            if decision.block_413:
+                buffered.close()
+                self._waf.logger.warning(
+                    "body limit exceeded — blocking",
+                    bytes=buffered.total_bytes,
+                    limit=self._body_limits.max_total,
+                    policy="block",
+                )
+                return _finalize_now(
+                    _error_response(start_response, 413, "Payload Too Large"), tx
+                )
+
+            if buffered.exceeded_total and self._body_limits.on_overflow == "skip":
+                self._waf.logger.warning(
+                    "body limit exceeded — bypassing WAF",
+                    bytes=buffered.total_bytes,
+                    limit=self._body_limits.max_total,
+                    policy="skip",
+                )
+                environ["wsgi.input"] = buffered.replay
+                downstream = self._app(environ, start_response)
+                collected: list[bytes] = []
+                close_downstream = getattr(downstream, "close", None)
+                try:
+                    for chunk in downstream:
+                        collected.append(chunk)
+                finally:
+                    if callable(close_downstream):
+                        try:
+                            close_downstream()
+                        except Exception:
+                            pass
+                    buffered.close()
+                    tx.close()
+                return collected
+
+            # WAF inspects: install the replay stream so Flask reads
+            # the body we already buffered, then drive phase 2.
+            environ["wsgi.input"] = buffered.replay
+            if tx.process_request_body():
+                blocked = self._maybe_block(tx, environ, start_response, buffered)
+                if blocked is not None:
+                    return blocked
+            if buffered.waf_truncated:
+                self._waf.logger.warning(
+                    "body limit exceeded — partial WAF inspection",
+                    bytes=buffered.total_bytes,
+                    limit=self._body_limits.max_total,
+                    policy="evaluate_partial",
+                )
         except CorazaError as exc:
+            if buffered is not None:
+                buffered.close()
             return _finalize_now(
                 self._handle_waf_error(environ, start_response, exc, request_info), tx
             )
@@ -105,7 +188,61 @@ class CorazaMiddleware:
             self._waf.mode,
             self._waf.logger,
         )
-        return _finalize_now(response_body, tx)
+        return _finalize_now(response_body, tx, buffered)
+
+    def _read_request_body_into_tx(
+        self, environ: WSGIEnviron, tx: Transaction
+    ) -> BufferedBody:
+        """Stream the WSGI body into the transaction under the size budget.
+
+        Reuses the shared spool helper so ``BodyLimits`` semantics
+        (block / skip / evaluate_partial) are identical across the
+        Flask, Starlette and Django adapters. Returns a ``BufferedBody``
+        whose ``replay`` stream MUST be attached to ``wsgi.input``
+        before the downstream app runs.
+        """
+        length_str = environ.get("CONTENT_LENGTH") or "0"
+        try:
+            length = int(length_str)
+        except ValueError:
+            length = 0
+        stream: IO[bytes] | None = environ.get("wsgi.input")
+        if length <= 0 or stream is None:
+            return BufferedBody(
+                replay=empty_replay(),
+                total_bytes=0,
+                exceeded_total=False,
+                waf_truncated=False,
+            )
+        return buffer_request_body(
+            chunked_reader(stream, content_length=length),
+            limits=self._body_limits,
+            append_to_tx=tx.append_request_body,
+        )
+
+    def _maybe_block(
+        self,
+        tx: Transaction,
+        environ: WSGIEnviron,
+        start_response: WSGIStartResponse,
+        buffered: BufferedBody | None = None,
+    ) -> Iterable[bytes] | None:
+        """Honor a phase interruption when in BLOCK mode.
+
+        Returns the WSGI iterable to send back when blocking, or
+        ``None`` to signal the caller to continue evaluation. Detect
+        mode (no block) returns ``None`` even on interruption — the
+        WAF still sees the full request, the operator gets logs, the
+        client gets the original handler's response.
+        """
+        intr = tx.interruption()
+        if intr is None or self._waf.mode is not ProcessMode.BLOCK:
+            return None
+        _log_block(self._waf.logger, intr, tx.matched_rules())
+        result = _call_on_block(self._on_block, intr, environ, start_response)
+        if buffered is not None:
+            buffered.close()
+        return _finalize_now(result, tx)
 
     def _handle_waf_error(
         self,
@@ -220,22 +357,6 @@ def _call_on_block(
     if result is None:
         return _default_on_block(intr, environ, start_response)
     return result
-
-
-def _read_wsgi_body(environ: WSGIEnviron) -> bytes | None:
-    length_str = environ.get("CONTENT_LENGTH") or "0"
-    try:
-        length = int(length_str)
-    except ValueError:
-        length = 0
-    if length <= 0:
-        return None
-    stream = environ.get("wsgi.input")
-    if stream is None:
-        return None
-    data = stream.read(length)
-    environ["wsgi.input"] = io.BytesIO(data)
-    return data
 
 
 def _request_info_from_environ(
@@ -467,13 +588,20 @@ def _capture_response(
     return buf
 
 
-def _finalize_now(body: Iterable[bytes], tx: Transaction) -> list[bytes]:
+def _finalize_now(
+    body: Iterable[bytes], tx: Transaction, buffered: BufferedBody | None = None
+) -> list[bytes]:
     """Eagerly drain `body`, then run `process_logging` + `close` before return.
 
     Eager finalization trades streaming for deterministic audit/log emission —
     WSGI servers are inconsistent about calling `close()` on the returned
     iterable, and a missed finalizer leaks a transaction. Coraza-node takes
     the same tradeoff in its Express/Fastify adapters.
+
+    Closing ``buffered`` here (not earlier) lets the spool back the
+    downstream app's body reads — Flask buffers the iterable in
+    ``Response.iter_encoded`` before we get here, so once we're past
+    that drain it's safe to release the temp file.
     """
     collected: list[bytes] = []
     close_downstream = getattr(body, "close", None)
@@ -486,6 +614,8 @@ def _finalize_now(body: Iterable[bytes], tx: Transaction) -> list[bytes]:
                 close_downstream()
             except Exception:
                 pass
+        if buffered is not None:
+            buffered.close()
         try:
             tx.process_logging()
         finally:
@@ -493,11 +623,19 @@ def _finalize_now(body: Iterable[bytes], tx: Transaction) -> list[bytes]:
     return collected
 
 
+# 413 needs the canonical reason phrase so curl/Caddy/Nginx log it
+# with the right semantics (HTTP/1.1 §6.5.11). Old default of
+# "Blocked" works for 4xx but reads wrong for "too large".
+_REASON_PHRASES: dict[int, str] = {
+    413: "Payload Too Large",
+}
+
+
 def _error_response(
     start_response: WSGIStartResponse, status: int, message: str
 ) -> Iterable[bytes]:
     payload = message.encode("utf-8")
-    reason = "Blocked" if status < 500 else "Error"
+    reason = _REASON_PHRASES.get(status) or ("Blocked" if status < 500 else "Error")
     start_response(
         f"{status} {reason}",
         [
