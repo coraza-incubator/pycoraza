@@ -81,7 +81,7 @@ jobs:
           echo "LIBCORAZA_PREFIX=${GITHUB_WORKSPACE}/build/libcoraza" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=${GITHUB_WORKSPACE}/build/libcoraza/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           cache: 'pip'
