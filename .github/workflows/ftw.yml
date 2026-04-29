@@ -183,7 +183,7 @@ jobs:
           echo "go_version=${GO_VERSION}" >> "$GITHUB_OUTPUT"
           echo "go_ftw_version=${GO_FTW_VERSION}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           cache: 'pip'
