@@ -163,7 +163,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: libcoraza-x86_64-ftw
           path: build/libcoraza
