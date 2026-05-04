@@ -1,4 +1,4 @@
-LIBCORAZA_TAG=main
+LIBCORAZA_TAG=v1.4.0
 # Informational only; the real Coraza version is whatever
 # native/libcoraza/go.mod pins (authoritative). As of LIBCORAZA_TAG=main
 # that is v3.7.0.
